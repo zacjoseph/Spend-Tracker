@@ -6,6 +6,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -14,7 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useColors } from '@/hooks/useColors';
-import { ExpenseType, useSpending } from '@/context/SpendingContext';
+import { CurrencyCode, ExpenseType, useSpending } from '@/context/SpendingContext';
 
 type Props = {
   visible: boolean;
@@ -41,9 +42,10 @@ const monthlyCategories = [
 export function QuickAddSheet({ visible, initialType = 'daily', onClose }: Props) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { addExpense } = useSpending();
+  const { addExpense, availableCurrencies, entryCurrency, setEntryCurrency } = useSpending();
   const [type, setType] = useState<ExpenseType>(initialType);
   const [amount, setAmount] = useState('');
+  const [currency, setCurrency] = useState<CurrencyCode>(entryCurrency);
   const [category, setCategory] = useState(initialType === 'daily' ? 'Food' : 'Rent');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
@@ -56,11 +58,12 @@ export function QuickAddSheet({ visible, initialType = 'daily', onClose }: Props
     setError('');
   };
 
-  const close = () => {
+  const close = (nextCurrency: CurrencyCode = entryCurrency) => {
     Keyboard.dismiss();
     setAmount('');
     setNote('');
     setError('');
+    setCurrency(nextCurrency);
     setType(initialType);
     setCategory(initialType === 'daily' ? 'Food' : 'Rent');
     onClose();
@@ -73,12 +76,13 @@ export function QuickAddSheet({ visible, initialType = 'daily', onClose }: Props
       return;
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-    addExpense({ type, amount: parsedAmount, category, note: note.trim() });
-    close();
+    addExpense({ type, amount: parsedAmount, currency, category, note: note.trim() });
+    setEntryCurrency(currency);
+    close(currency);
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={close}>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={() => close()}>
       <View style={[styles.overlay, { backgroundColor: colors.navy + '66' }]}>
         <View style={[styles.sheet, { backgroundColor: colors.background, paddingBottom: Math.max(insets.bottom, 18) }]}>
           <View style={styles.grabber} />
@@ -90,7 +94,7 @@ export function QuickAddSheet({ visible, initialType = 'daily', onClose }: Props
             <Pressable
               accessibilityLabel="Close"
               testID="close-add-expense"
-              onPress={close}
+              onPress={() => close()}
               style={({ pressed }) => [styles.closeButton, { backgroundColor: colors.secondary, opacity: pressed ? 0.65 : 1 }]}
             >
               <Feather name="x" size={20} color={colors.foreground} />
@@ -122,7 +126,7 @@ export function QuickAddSheet({ visible, initialType = 'daily', onClose }: Props
 
             <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>AMOUNT</Text>
             <View style={[styles.amountField, { backgroundColor: colors.card, borderColor: error ? colors.destructive : colors.border }]}>
-              <Text style={[styles.currency, { color: colors.mutedForeground }]}>$</Text>
+              <Text style={[styles.currency, { color: colors.mutedForeground }]}>{currency === 'USD' ? '$' : currency === 'UGX' ? 'USh' : currency}</Text>
               <TextInput
                 autoFocus
                 testID="expense-amount"
@@ -139,6 +143,23 @@ export function QuickAddSheet({ visible, initialType = 'daily', onClose }: Props
               />
             </View>
             {!!error && <Text style={[styles.error, { color: colors.destructive }]}>{error}</Text>}
+
+            <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>CURRENCY</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.currencyList}>
+              {availableCurrencies.map((option) => (
+                <Pressable
+                  key={option}
+                  testID={`expense-currency-${option}`}
+                  onPress={() => setCurrency(option)}
+                  style={({ pressed }) => [
+                    styles.currencyChip,
+                    { backgroundColor: currency === option ? colors.navy : colors.card, borderColor: currency === option ? colors.navy : colors.border, opacity: pressed ? 0.7 : 1 },
+                  ]}
+                >
+                  <Text style={[styles.currencyChipCode, { color: currency === option ? '#ffffff' : colors.foreground }]}>{option}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
 
             <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>CATEGORY</Text>
             <View style={styles.categoryGrid}>
@@ -205,6 +226,9 @@ const styles = StyleSheet.create({
   currency: { fontSize: 29, fontWeight: '600', marginRight: 8 },
   amountInput: { flex: 1, fontSize: 34, fontWeight: '700', letterSpacing: -1 },
   error: { fontSize: 12, marginTop: -5 },
+  currencyList: { gap: 8, paddingVertical: 1 },
+  currencyChip: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 13, paddingVertical: 9 },
+  currencyChipCode: { fontSize: 12, fontWeight: '700', letterSpacing: 0.4 },
   categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   category: { minWidth: '30%', flexGrow: 1, height: 48, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 7, paddingHorizontal: 10 },
   categoryText: { fontSize: 12, fontWeight: '600' },

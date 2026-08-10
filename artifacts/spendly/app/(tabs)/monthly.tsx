@@ -7,11 +7,9 @@ import { QuickAddSheet } from '@/components/QuickAddSheet';
 import { Expense, useSpending } from '@/context/SpendingContext';
 import { useColors } from '@/hooks/useColors';
 
-const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
-const money = (value: number) => currency.format(value);
-
 function BillRow({ expense, onRemove }: { expense: Expense; onRemove: (id: string) => void }) {
   const colors = useColors();
+  const { formatAmount } = useSpending();
   const icon = expense.category === 'Rent' ? 'home' : expense.category === 'Electricity' ? 'zap' : expense.category === 'Internet' ? 'wifi' : expense.category === 'Phone' ? 'smartphone' : 'more-horizontal';
   return (
     <View style={[styles.billRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -22,7 +20,7 @@ function BillRow({ expense, onRemove }: { expense: Expense; onRemove: (id: strin
         <Text style={[styles.billTitle, { color: colors.foreground }]}>{expense.category}</Text>
         <Text style={[styles.billMeta, { color: colors.mutedForeground }]}>{expense.note || 'Recurring monthly bill'}</Text>
       </View>
-      <Text style={[styles.billAmount, { color: colors.foreground }]}>{money(expense.amount)}</Text>
+      <Text style={[styles.billAmount, { color: colors.foreground }]}>{formatAmount(expense.amount, expense.currency)}</Text>
       <Pressable
         testID={`delete-monthly-${expense.id}`}
         accessibilityLabel={`Delete ${expense.category}`}
@@ -43,7 +41,7 @@ function BillRow({ expense, onRemove }: { expense: Expense; onRemove: (id: strin
 export default function MonthlyScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { expenses, monthlyBillsTotal, removeExpense } = useSpending();
+  const { expenses, monthlyBillsTotal, formatAmount, removeExpense } = useSpending();
   const [isAddVisible, setIsAddVisible] = useState(false);
   const monthName = new Date().toLocaleDateString([], { month: 'long' });
   const bills = useMemo(() => expenses.filter((expense) => expense.type === 'monthly'), [expenses]);
@@ -80,7 +78,7 @@ export default function MonthlyScreen() {
             <View style={[styles.summaryCard, { backgroundColor: colors.accent }]}>
               <View>
                 <Text style={[styles.summaryLabel, { color: colors.accentForeground + 'b3' }]}>BILLS THIS MONTH</Text>
-                <Text style={[styles.summaryAmount, { color: colors.accentForeground }]}>{money(monthlyBillsTotal)}</Text>
+                <Text style={[styles.summaryAmount, { color: colors.accentForeground }]}>{formatAmount(monthlyBillsTotal)}</Text>
               </View>
               <View style={[styles.summaryIcon, { backgroundColor: colors.accentForeground + '17' }]}>
                 <Feather name="repeat" size={20} color={colors.accentForeground} />

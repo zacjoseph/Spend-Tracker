@@ -7,12 +7,6 @@ import { QuickAddSheet } from '@/components/QuickAddSheet';
 import { Expense, useSpending } from '@/context/SpendingContext';
 import { useColors } from '@/hooks/useColors';
 
-const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
-
-function money(value: number) {
-  return currency.format(value);
-}
-
 function getGreeting() {
   const hour = new Date().getHours();
   if (hour < 12) return 'Good morning';
@@ -27,6 +21,7 @@ function formatDate(dateString: string) {
 
 function ExpenseRow({ expense, onRemove }: { expense: Expense; onRemove: (id: string) => void }) {
   const colors = useColors();
+  const { formatAmount } = useSpending();
   const icon = expense.type === 'monthly' ? 'calendar' : expense.category === 'Food' ? 'coffee' : expense.category === 'Transport' ? 'navigation' : expense.category === 'Shopping' ? 'shopping-bag' : 'circle';
   return (
     <View style={[styles.expenseRow, { borderBottomColor: colors.border }]}>
@@ -37,7 +32,7 @@ function ExpenseRow({ expense, onRemove }: { expense: Expense; onRemove: (id: st
         <Text style={[styles.expenseCategory, { color: colors.foreground }]}>{expense.category}</Text>
         <Text style={[styles.expenseMeta, { color: colors.mutedForeground }]}>{expense.note || (expense.type === 'monthly' ? 'Monthly bill' : formatDate(expense.date))}</Text>
       </View>
-      <Text style={[styles.expenseAmount, { color: colors.foreground }]}>{money(expense.amount)}</Text>
+      <Text style={[styles.expenseAmount, { color: colors.foreground }]}>{formatAmount(expense.amount, expense.currency)}</Text>
       <Pressable
         accessibilityLabel={`Delete ${expense.category}`}
         testID={`delete-expense-${expense.id}`}
@@ -59,7 +54,7 @@ function ExpenseRow({ expense, onRemove }: { expense: Expense; onRemove: (id: st
 export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { expenses, isLoaded, dailyTodayTotal, monthlyTotal, removeExpense } = useSpending();
+  const { expenses, isLoaded, dailyTodayTotal, monthlyTotal, formatAmount, removeExpense } = useSpending();
   const [isAddVisible, setIsAddVisible] = useState(false);
   const [addType, setAddType] = useState<'daily' | 'monthly'>('daily');
   const recent = useMemo(() => expenses.slice(0, 8), [expenses]);
@@ -103,7 +98,7 @@ export default function HomeScreen() {
               <View style={styles.heroTop}>
                 <View>
                   <Text style={[styles.heroLabel, { color: colors.navyMuted }]}>TOTAL THIS MONTH</Text>
-                  <Text style={[styles.heroAmount, { color: '#ffffff' }]}>{money(monthlyTotal)}</Text>
+                  <Text style={[styles.heroAmount, { color: '#ffffff' }]}>{formatAmount(monthlyTotal)}</Text>
                 </View>
                 <View style={[styles.heroIcon, { backgroundColor: colors.navyMuted + '33' }]}>
                   <Feather name="trending-up" size={20} color={colors.accent} />
@@ -121,7 +116,7 @@ export default function HomeScreen() {
                   <View style={[styles.statDot, { backgroundColor: colors.primary }]} />
                   <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>TODAY</Text>
                 </View>
-                <Text style={[styles.statValue, { color: colors.foreground }]}>{money(dailyTodayTotal)}</Text>
+                <Text style={[styles.statValue, { color: colors.foreground }]}>{formatAmount(dailyTodayTotal)}</Text>
               </View>
               <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
               <View style={styles.stat}>
@@ -129,7 +124,7 @@ export default function HomeScreen() {
                   <View style={[styles.statDot, { backgroundColor: colors.success }]} />
                   <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>THIS MONTH</Text>
                 </View>
-                <Text style={[styles.statValue, { color: colors.foreground }]}>{money(monthlyTotal)}</Text>
+                <Text style={[styles.statValue, { color: colors.foreground }]}>{formatAmount(monthlyTotal)}</Text>
               </View>
             </View>
 
