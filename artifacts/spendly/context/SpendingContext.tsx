@@ -14,8 +14,13 @@ export const CURRENCY_OPTIONS = [
   { code: 'ZAR', name: 'South African Rand', symbol: 'R' },
 ] as const;
 
-export type CurrencyCode = (typeof CURRENCY_OPTIONS)[number]['code'];
-export type CurrencyOption = (typeof CURRENCY_OPTIONS)[number];
+export type CurrencyCode = string;
+export type CurrencyOption = {
+  code: CurrencyCode;
+  name: string;
+  symbol: string;
+  isCustom?: boolean;
+};
 
 export type Expense = {
   id: string;
@@ -42,7 +47,8 @@ type SpendingContextValue = {
   mainCurrency: CurrencyCode;
   entryCurrency: CurrencyCode;
   availableCurrencies: CurrencyCode[];
-  ratesToUsd: Record<CurrencyCode, number>;
+  currencyOptions: CurrencyOption[];
+  ratesToUsd: Record<string, number>;
   lastRateUpdated: string | null;
   rateStatus: 'idle' | 'refreshing' | 'error';
   dailyTodayTotal: number;
@@ -53,7 +59,7 @@ type SpendingContextValue = {
   removeExpense: (id: string) => void;
   setMainCurrency: (currency: CurrencyCode) => void;
   setEntryCurrency: (currency: CurrencyCode) => void;
-  addCurrency: (currency: CurrencyCode) => void;
+  addCustomCurrency: (input: { code: string; name: string; symbol: string; rateToUsd: number }) => boolean;
   removeCurrency: (currency: CurrencyCode) => void;
   refreshRates: () => Promise<void>;
   formatAmount: (amount: number, currency?: CurrencyCode) => string;
@@ -62,7 +68,7 @@ type SpendingContextValue = {
 const STORAGE_KEY = '@spendly/data/v2';
 const LEGACY_STORAGE_KEY = '@spendly/expenses/v1';
 const DEFAULT_CURRENCIES: CurrencyCode[] = ['USD', 'UGX'];
-const FALLBACK_RATES_TO_USD: Record<CurrencyCode, number> = {
+const FALLBACK_RATES_TO_USD: Record<string, number> = {
   USD: 1,
   UGX: 0.00028,
   EUR: 1.08,
@@ -93,7 +99,8 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
   const [mainCurrency, setMainCurrencyState] = useState<CurrencyCode>('USD');
   const [entryCurrency, setEntryCurrencyState] = useState<CurrencyCode>('UGX');
   const [availableCurrencies, setAvailableCurrencies] = useState<CurrencyCode[]>(DEFAULT_CURRENCIES);
-  const [ratesToUsd, setRatesToUsd] = useState<Record<CurrencyCode, number>>(FALLBACK_RATES_TO_USD);
+  const [customCurrencies, setCustomCurrencies] = useState<CurrencyOption[]>([]);
+  const [ratesToUsd, setRatesToUsd] = useState<Record<string, number>>(FALLBACK_RATES_TO_USD);
   const [lastRateUpdated, setLastRateUpdated] = useState<string | null>(null);
   const [rateStatus, setRateStatus] = useState<'idle' | 'refreshing' | 'error'>('idle');
   const [isLoaded, setIsLoaded] = useState(false);
@@ -107,14 +114,22 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
             mainCurrency?: CurrencyCode;
             entryCurrency?: CurrencyCode;
             availableCurrencies?: CurrencyCode[];
-            ratesToUsd?: Record<CurrencyCode, number>;
+            customCurrencies?: CurrencyOption[];
+            ratesToUsd?: Record<string, number>;
             lastRateUpdated?: string | null;
           };
+          const storedCustomCurrencies = Array.isArray(parsed.customCurrencies)
+            ? parsed.customCurrencies
+                .filter((currency) => currency?.isCustom && /^[A-Z0-9]{3,6}$/.test(currency.code) && currency.name && currency.symbol)
+                .map((currency) => ({ ...currency, code: currency.code.toUpperCase(), isCustom: true }))
+            : [];
+          const knownCodes = new Set([...CURRENCY_OPTIONS.map((item) => item.code), ...storedCustomCurrencies.map((item) => item.code)]);
+          setCustomCurrencies(storedCustomCurrencies);
           if (Array.isArray(parsed.expenses)) setExpenses(parsed.expenses);
-          if (parsed.mainCurrency && CURRENCY_OPTIONS.some((item) => item.code === parsed.mainCurrency)) setMainCurrencyState(parsed.mainCurrency);
-          if (parsed.entryCurrency && CURRENCY_OPTIONS.some((item) => item.code === parsed.entryCurrency)) setEntryCurrencyState(parsed.entryCurrency);
+          if (parsed.mainCurrency && knownCodes.has(parsed.mainCurrency)) setMainCurrencyState(parsed.mainCurrency);
+          if (parsed.entryCurrency && knownCodes.has(parsed.entryCurrency)) setEntryCurrencyState(parsed.entryCurrency);
           if (Array.isArray(parsed.availableCurrencies)) {
-            setAvailableCurrencies(Array.from(new Set(parsed.availableCurrencies.filter((currency) => CURRENCY_OPTIONS.some((item) => item.code === currency)))));
+            setAvailableCurrencies(Array.from(new Set(parsed.availableCurrencies.filter((currency) => knownCodes.has(currency)))));
           }
           if (parsed.ratesToUsd) setRatesToUsd({ ...FALLBACK_RATES_TO_USD, ...parsed.ratesToUsd });
           if (parsed.lastRateUpdated) setLastRateUpdated(parsed.lastRateUpdated);
@@ -133,10 +148,10 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
     if (isLoaded) {
       AsyncStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ expenses, mainCurrency, entryCurrency, availableCurrencies, ratesToUsd, lastRateUpdated }),
+        JSON.stringify({ expenses, mainCurrency, entryCurrency, availableCurrencies, customCurrencies, ratesToUsd, lastRateUpdated }),
       ).catch(() => undefined);
     }
-  }, [expenses, mainCurrency, entryCurrency, availableCurrencies, ratesToUsd, lastRateUpdated, isLoaded]);
+  }, [expenses, mainCurrency, entryCurrency, availableCurrencies, customCurrencies, ratesToUsd, lastRateUpdated, isLoaded]);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -154,6 +169,9 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
         if (code === 'USD') nextRates[code] = 1;
         else if (data.rates?.[code]) nextRates[code] = 1 / data.rates[code];
       });
+      customCurrencies.forEach(({ code }) => {
+        if (ratesToUsd[code]) nextRates[code] = ratesToUsd[code];
+      });
       setRatesToUsd(nextRates);
       setLastRateUpdated(new Date().toISOString());
       setRateStatus('idle');
@@ -164,8 +182,9 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo(() => {
     const now = new Date();
+    const currencyOptions: CurrencyOption[] = [...CURRENCY_OPTIONS, ...customCurrencies];
     const convertToMain = (amount: number, currency: CurrencyCode) =>
-      amount * ratesToUsd[currency] / ratesToUsd[mainCurrency];
+      amount * (ratesToUsd[currency] ?? 1) / (ratesToUsd[mainCurrency] ?? 1);
     const currentMonth = expenses.filter((expense) => isSameMonth(expense.date, now));
     const dailyTodayTotal = expenses
       .filter((expense) => expense.type === 'daily' && isToday(expense.date, now))
@@ -183,6 +202,7 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
       mainCurrency,
       entryCurrency,
       availableCurrencies,
+      currencyOptions,
       ratesToUsd,
       lastRateUpdated,
       rateStatus,
@@ -209,8 +229,21 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
       setEntryCurrency: (currency: CurrencyCode) => {
         if (availableCurrencies.includes(currency)) setEntryCurrencyState(currency);
       },
-      addCurrency: (currency: CurrencyCode) => {
-        setAvailableCurrencies((current) => (current.includes(currency) ? current : [...current, currency]));
+      addCustomCurrency: (input: { code: string; name: string; symbol: string; rateToUsd: number }) => {
+        const code = input.code.trim().toUpperCase();
+        if (!/^[A-Z0-9]{3,6}$/.test(code) || !input.name.trim() || !input.symbol.trim() || !Number.isFinite(input.rateToUsd) || input.rateToUsd <= 0) {
+          return false;
+        }
+        if (CURRENCY_OPTIONS.some((currency) => currency.code === code) || availableCurrencies.includes(code)) {
+          return false;
+        }
+        setCustomCurrencies((current) => [
+          ...current.filter((currency) => currency.code !== code),
+          { code, name: input.name.trim(), symbol: input.symbol.trim(), isCustom: true },
+        ]);
+        setRatesToUsd((current) => ({ ...current, [code]: input.rateToUsd }));
+        setAvailableCurrencies((current) => [...current, code]);
+        return true;
       },
       removeCurrency: (currency: CurrencyCode) => {
         if (currency === mainCurrency) return;
@@ -218,10 +251,17 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
         if (entryCurrency === currency) setEntryCurrencyState(mainCurrency);
       },
       refreshRates,
-      formatAmount: (amount: number, currency = mainCurrency) =>
-        new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: currency === 'UGX' || currency === 'TZS' || currency === 'RWF' ? 0 : 2 }).format(amount),
+      formatAmount: (amount: number, currency = mainCurrency) => {
+        const option = currencyOptions.find((item) => item.code === currency);
+        const maximumFractionDigits = currency === 'UGX' || currency === 'TZS' || currency === 'RWF' ? 0 : 2;
+        try {
+          return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits }).format(amount);
+        } catch {
+          return `${option?.symbol ?? currency} ${amount.toLocaleString('en-US', { maximumFractionDigits })}`;
+        }
+      },
     };
-  }, [expenses, isLoaded, mainCurrency, entryCurrency, availableCurrencies, ratesToUsd, lastRateUpdated, rateStatus]);
+  }, [expenses, isLoaded, mainCurrency, entryCurrency, availableCurrencies, customCurrencies, ratesToUsd, lastRateUpdated, rateStatus]);
 
   return <SpendingContext.Provider value={value}>{children}</SpendingContext.Provider>;
 }
