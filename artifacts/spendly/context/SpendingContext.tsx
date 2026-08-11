@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 export type ExpenseType = 'daily' | 'monthly';
 
@@ -20,6 +20,13 @@ export type CurrencyOption = {
   name: string;
   symbol: string;
   isCustom?: boolean;
+};
+
+export type AddCustomCurrencyResult = {
+  success: boolean;
+  message?: string;
+  currency?: CurrencyOption;
+  rateToUsd?: number;
 };
 
 export type Expense = {
@@ -59,7 +66,7 @@ type SpendingContextValue = {
   removeExpense: (id: string) => void;
   setMainCurrency: (currency: CurrencyCode) => void;
   setEntryCurrency: (currency: CurrencyCode) => void;
-  addCustomCurrency: (input: { code: string; name: string; symbol: string; rateToUsd: number }) => boolean;
+  addCustomCurrency: (input: { code: string; name: string }) => Promise<AddCustomCurrencyResult>;
   removeCurrency: (currency: CurrencyCode) => void;
   refreshRates: () => Promise<void>;
   formatAmount: (amount: number, currency?: CurrencyCode) => string;
@@ -79,6 +86,21 @@ const FALLBACK_RATES_TO_USD: Record<string, number> = {
   ZAR: 0.054,
 };
 const SpendingContext = createContext<SpendingContextValue | null>(null);
+const RATES_ENDPOINT = 'https://open.er-api.com/v6/latest/USD';
+const RATE_REFRESH_INTERVAL = 6 * 60 * 60 * 1000;
+
+function getCurrencySymbol(code: string) {
+  try {
+    const parts = new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: code,
+      currencyDisplay: 'narrowSymbol',
+    }).formatToParts(0);
+    return parts.find((part) => part.type === 'currency')?.value ?? code;
+  } catch {
+    return code;
+  }
+}
 
 function isSameMonth(dateString: string, now: Date) {
   const date = new Date(dateString);
@@ -104,6 +126,16 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
   const [lastRateUpdated, setLastRateUpdated] = useState<string | null>(null);
   const [rateStatus, setRateStatus] = useState<'idle' | 'refreshing' | 'error'>('idle');
   const [isLoaded, setIsLoaded] = useState(false);
+  const customCurrenciesRef = useRef(customCurrencies);
+  const ratesToUsdRef = useRef(ratesToUsd);
+
+  useEffect(() => {
+    customCurrenciesRef.current = customCurrencies;
+  }, [customCurrencies]);
+
+  useEffect(() => {
+    ratesToUsdRef.current = ratesToUsd;
+  }, [ratesToUsd]);
 
   useEffect(() => {
     Promise.all([AsyncStorage.getItem(STORAGE_KEY), AsyncStorage.getItem(LEGACY_STORAGE_KEY)])
@@ -156,21 +188,25 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!isLoaded) return;
     refreshRates();
+    const interval = setInterval(() => {
+      refreshRates();
+    }, RATE_REFRESH_INTERVAL);
+    return () => clearInterval(interval);
   }, [isLoaded]);
 
   const refreshRates = async () => {
     setRateStatus('refreshing');
     try {
-      const response = await fetch('https://open.er-api.com/v6/latest/USD');
+      const response = await fetch(RATES_ENDPOINT);
       const data = (await response.json()) as { result?: string; rates?: Record<string, number> };
       if (data.result !== 'success' || !data.rates) throw new Error('Rates unavailable');
-      const nextRates = { ...FALLBACK_RATES_TO_USD };
+      const nextRates = { ...FALLBACK_RATES_TO_USD, ...ratesToUsdRef.current };
       CURRENCY_OPTIONS.forEach(({ code }) => {
         if (code === 'USD') nextRates[code] = 1;
         else if (data.rates?.[code]) nextRates[code] = 1 / data.rates[code];
       });
-      customCurrencies.forEach(({ code }) => {
-        if (ratesToUsd[code]) nextRates[code] = ratesToUsd[code];
+      customCurrenciesRef.current.forEach(({ code }) => {
+        if (data.rates?.[code]) nextRates[code] = 1 / data.rates[code];
       });
       setRatesToUsd(nextRates);
       setLastRateUpdated(new Date().toISOString());
@@ -229,21 +265,35 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
       setEntryCurrency: (currency: CurrencyCode) => {
         if (availableCurrencies.includes(currency)) setEntryCurrencyState(currency);
       },
-      addCustomCurrency: (input: { code: string; name: string; symbol: string; rateToUsd: number }) => {
+      addCustomCurrency: async (input: { code: string; name: string }) => {
         const code = input.code.trim().toUpperCase();
-        if (!/^[A-Z0-9]{3,6}$/.test(code) || !input.name.trim() || !input.symbol.trim() || !Number.isFinite(input.rateToUsd) || input.rateToUsd <= 0) {
-          return false;
+        if (!/^[A-Z]{3}$/.test(code) || !input.name.trim()) {
+          return { success: false, message: 'Enter a valid 3-letter currency code and name.' };
         }
         if (CURRENCY_OPTIONS.some((currency) => currency.code === code) || availableCurrencies.includes(code)) {
-          return false;
+          return { success: false, message: 'That currency is already available.' };
         }
-        setCustomCurrencies((current) => [
-          ...current.filter((currency) => currency.code !== code),
-          { code, name: input.name.trim(), symbol: input.symbol.trim(), isCustom: true },
-        ]);
-        setRatesToUsd((current) => ({ ...current, [code]: input.rateToUsd }));
-        setAvailableCurrencies((current) => [...current, code]);
-        return true;
+        try {
+          const response = await fetch(RATES_ENDPOINT);
+          const data = (await response.json()) as { result?: string; rates?: Record<string, number> };
+          const unitsPerUsd = data.result === 'success' ? data.rates?.[code] : undefined;
+          if (!unitsPerUsd || unitsPerUsd <= 0) {
+            return { success: false, message: `No live exchange rate was found for ${code}.` };
+          }
+          const rateToUsd = 1 / unitsPerUsd;
+          const currency: CurrencyOption = {
+            code,
+            name: input.name.trim(),
+            symbol: getCurrencySymbol(code),
+            isCustom: true,
+          };
+          setCustomCurrencies((current) => [...current.filter((item) => item.code !== code), currency]);
+          setRatesToUsd((current) => ({ ...current, [code]: rateToUsd }));
+          setAvailableCurrencies((current) => [...current, code]);
+          return { success: true, currency, rateToUsd };
+        } catch {
+          return { success: false, message: 'Could not reach the exchange-rate service. Try again when online.' };
+        }
       },
       removeCurrency: (currency: CurrencyCode) => {
         if (currency === mainCurrency) return;

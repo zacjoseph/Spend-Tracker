@@ -3,7 +3,7 @@ import * as Haptics from 'expo-haptics';
 import React, { useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { CURRENCY_OPTIONS, CurrencyCode, useSpending } from '@/context/SpendingContext';
+import { CurrencyCode, useSpending } from '@/context/SpendingContext';
 import { useColors } from '@/hooks/useColors';
 
 function formatUpdated(value: string | null) {
@@ -27,9 +27,8 @@ export default function SettingsScreen() {
   } = useSpending();
   const [customCode, setCustomCode] = useState('');
   const [customName, setCustomName] = useState('');
-  const [customSymbol, setCustomSymbol] = useState('');
-  const [customRate, setCustomRate] = useState('');
   const [customError, setCustomError] = useState('');
+  const [isAddingCurrency, setIsAddingCurrency] = useState(false);
 
   const chooseMainCurrency = (currency: CurrencyCode) => {
     Haptics.selectionAsync().catch(() => undefined);
@@ -39,22 +38,19 @@ export default function SettingsScreen() {
   const currencyName = (code: CurrencyCode) => currencyOptions.find((item) => item.code === code)?.name ?? code;
   const currencySymbol = (code: CurrencyCode) => currencyOptions.find((item) => item.code === code)?.symbol ?? code;
 
-  const saveCustomCurrency = () => {
-    const success = addCustomCurrency({
-      code: customCode,
-      name: customName,
-      symbol: customSymbol,
-      rateToUsd: Number(customRate.replace(',', '.')),
-    });
-    if (!success) {
-      setCustomError('Add a unique code, name, symbol, and a rate greater than zero.');
+  const saveCustomCurrency = async () => {
+    if (isAddingCurrency) return;
+    setIsAddingCurrency(true);
+    setCustomError('');
+    const result = await addCustomCurrency({ code: customCode, name: customName });
+    setIsAddingCurrency(false);
+    if (!result.success) {
+      setCustomError(result.message ?? 'Could not add this currency.');
       return;
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
     setCustomCode('');
     setCustomName('');
-    setCustomSymbol('');
-    setCustomRate('');
     setCustomError('');
   };
 
@@ -138,36 +134,23 @@ export default function SettingsScreen() {
 
       <Text style={[styles.addLabel, { color: colors.mutedForeground }]}>ADD A CUSTOM CURRENCY</Text>
       <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>
-        Add any currency you use while traveling. The rate should be the value of 1 unit in US dollars.
+        Enter an ISO currency code and Spendly will fetch its live rate and symbol automatically.
       </Text>
       <View style={[styles.customCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <View style={styles.customRow}>
-          <View style={styles.customFieldSmall}>
-            <Text style={[styles.inputLabel, { color: colors.mutedForeground }]}>CODE</Text>
-            <TextInput
-              testID="custom-currency-code"
-              value={customCode}
-              onChangeText={(value) => setCustomCode(value.toUpperCase())}
-              placeholder="JPY"
-              placeholderTextColor={colors.mutedForeground}
-              autoCapitalize="characters"
-              maxLength={6}
-              style={[styles.customInput, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border }]}
-            />
-          </View>
-          <View style={styles.customFieldSmall}>
-            <Text style={[styles.inputLabel, { color: colors.mutedForeground }]}>SYMBOL</Text>
-            <TextInput
-              testID="custom-currency-symbol"
-              value={customSymbol}
-              onChangeText={setCustomSymbol}
-              placeholder="¥"
-              placeholderTextColor={colors.mutedForeground}
-              maxLength={4}
-              style={[styles.customInput, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border }]}
-            />
-          </View>
-        </View>
+        <Text style={[styles.inputLabel, { color: colors.mutedForeground }]}>CODE</Text>
+        <TextInput
+          testID="custom-currency-code"
+          value={customCode}
+          onChangeText={(value) => {
+            setCustomCode(value.replace(/[^a-z]/gi, '').toUpperCase());
+            setCustomError('');
+          }}
+          placeholder="JPY"
+          placeholderTextColor={colors.mutedForeground}
+          autoCapitalize="characters"
+          maxLength={3}
+          style={[styles.customInput, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border }]}
+        />
         <Text style={[styles.inputLabel, { color: colors.mutedForeground }]}>NAME</Text>
         <TextInput
           testID="custom-currency-name"
@@ -177,24 +160,18 @@ export default function SettingsScreen() {
           placeholderTextColor={colors.mutedForeground}
           style={[styles.customInput, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border }]}
         />
-        <Text style={[styles.inputLabel, { color: colors.mutedForeground }]}>1 UNIT IN USD</Text>
-        <TextInput
-          testID="custom-currency-rate"
-          value={customRate}
-          onChangeText={setCustomRate}
-          placeholder="0.0067"
-          placeholderTextColor={colors.mutedForeground}
-          keyboardType="decimal-pad"
-          style={[styles.customInput, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border }]}
-        />
+        <Text style={[styles.lookupHint, { color: colors.mutedForeground }]}>
+          Live rate and symbol are fetched when you add it, then refreshed automatically every 6 hours.
+        </Text>
         {!!customError && <Text style={[styles.customError, { color: colors.destructive }]}>{customError}</Text>}
         <Pressable
           testID="save-custom-currency"
           onPress={saveCustomCurrency}
-          style={({ pressed }) => [styles.addButton, { backgroundColor: colors.primary, opacity: pressed ? 0.75 : 1 }]}
+          disabled={isAddingCurrency}
+          style={({ pressed }) => [styles.addButton, { backgroundColor: colors.primary, opacity: pressed || isAddingCurrency ? 0.65 : 1 }]}
         >
-          <Feather name="plus" size={17} color={colors.primaryForeground} />
-          <Text style={[styles.addButtonText, { color: colors.primaryForeground }]}>Add currency</Text>
+          {isAddingCurrency ? <ActivityIndicator size="small" color={colors.primaryForeground} /> : <Feather name="plus" size={17} color={colors.primaryForeground} />}
+          <Text style={[styles.addButtonText, { color: colors.primaryForeground }]}>{isAddingCurrency ? 'Fetching rate…' : 'Fetch & add currency'}</Text>
         </Pressable>
       </View>
 
@@ -247,10 +224,9 @@ const styles = StyleSheet.create({
   mainLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1 },
   addLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.3, marginTop: 24, marginBottom: 10 },
   customCard: { borderRadius: 17, borderWidth: 1, padding: 14, marginTop: 11 },
-  customRow: { flexDirection: 'row', gap: 10 },
-  customFieldSmall: { flex: 1 },
   inputLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.1, marginBottom: 5, marginTop: 5 },
   customInput: { minHeight: 44, borderRadius: 11, borderWidth: 1, paddingHorizontal: 12, fontSize: 13 },
+  lookupHint: { fontSize: 10, lineHeight: 15, marginTop: 10 },
   customError: { fontSize: 11, lineHeight: 16, marginTop: 8 },
   addButton: { minHeight: 45, borderRadius: 12, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 7, marginTop: 13 },
   addButtonText: { fontSize: 13, fontWeight: '700' },
