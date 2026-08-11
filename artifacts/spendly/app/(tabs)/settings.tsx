@@ -18,6 +18,7 @@ export default function SettingsScreen() {
     mainCurrency,
     availableCurrencies,
     currencyOptions,
+    ratesToUsd,
     setMainCurrency,
     addCustomCurrency,
     removeCurrency,
@@ -37,6 +38,10 @@ export default function SettingsScreen() {
 
   const currencyName = (code: CurrencyCode) => currencyOptions.find((item) => item.code === code)?.name ?? code;
   const currencySymbol = (code: CurrencyCode) => currencyOptions.find((item) => item.code === code)?.symbol ?? code;
+  const formatRate = (value: number) => {
+    if (!Number.isFinite(value)) return '—';
+    return value.toLocaleString('en-US', { maximumFractionDigits: value < 0.01 ? 6 : value < 1 ? 4 : 2 });
+  };
 
   const saveCustomCurrency = async () => {
     if (isAddingCurrency) return;
@@ -132,6 +137,32 @@ export default function SettingsScreen() {
         ))}
       </View>
 
+      <View style={styles.ratesHeader}>
+        <View>
+          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Exchange rates</Text>
+          <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>Compared with your main currency.</Text>
+        </View>
+        <Text style={[styles.ratesUpdated, { color: colors.mutedForeground }]}>{rateStatus === 'refreshing' ? 'Updating…' : formatUpdated(lastRateUpdated)}</Text>
+      </View>
+      <View style={[styles.rateList, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        {availableCurrencies.map((currency, index) => {
+          const mainRateToUsd = ratesToUsd[mainCurrency] ?? 1;
+          const currencyRateToUsd = ratesToUsd[currency] ?? 1;
+          const mainToCurrency = mainRateToUsd / currencyRateToUsd;
+          return (
+            <View key={`rate-${currency}`} style={[styles.rateRow, index < availableCurrencies.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
+              <View style={[styles.rateBadge, { backgroundColor: colors.secondary }]}>
+                <Text style={[styles.rateBadgeText, { color: colors.foreground }]}>{currency}</Text>
+              </View>
+              <View style={styles.rateCopy}>
+                <Text style={[styles.rateTitle, { color: colors.foreground }]}>1 {mainCurrency} = {formatRate(mainToCurrency)} {currency}</Text>
+                <Text style={[styles.rateMeta, { color: colors.mutedForeground }]}>{currencyName(currency)}</Text>
+              </View>
+            </View>
+          );
+        })}
+      </View>
+
       <Text style={[styles.addLabel, { color: colors.mutedForeground }]}>ADD A CUSTOM CURRENCY</Text>
       <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>
         Enter an ISO currency code and Spendly will fetch its live rate and symbol automatically.
@@ -177,7 +208,7 @@ export default function SettingsScreen() {
 
       <View style={[styles.ratesCard, { backgroundColor: colors.secondary }]}>
         <View style={styles.ratesCopy}>
-          <Text style={[styles.ratesTitle, { color: colors.foreground }]}>Exchange rates</Text>
+          <Text style={[styles.ratesTitle, { color: colors.foreground }]}>Refresh exchange rates</Text>
           <Text style={[styles.ratesMeta, { color: colors.mutedForeground }]}>{rateStatus === 'refreshing' ? 'Refreshing rates…' : rateStatus === 'error' ? 'Could not refresh. Using saved rates.' : formatUpdated(lastRateUpdated)}</Text>
         </View>
         <Pressable
@@ -221,6 +252,15 @@ const styles = StyleSheet.create({
   availableCopy: { flex: 1 },
   availableName: { fontSize: 13, fontWeight: '600', marginBottom: 4 },
   availableSymbol: { fontSize: 11, fontWeight: '500' },
+  ratesHeader: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 30, marginBottom: 12 },
+  ratesUpdated: { fontSize: 9, fontWeight: '500', maxWidth: 125, textAlign: 'right' },
+  rateList: { borderRadius: 17, borderWidth: 1, paddingHorizontal: 14 },
+  rateRow: { minHeight: 67, flexDirection: 'row', alignItems: 'center', gap: 11 },
+  rateBadge: { minWidth: 50, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 7 },
+  rateBadgeText: { fontSize: 11, fontWeight: '700' },
+  rateCopy: { flex: 1 },
+  rateTitle: { fontSize: 12, fontWeight: '700', marginBottom: 4 },
+  rateMeta: { fontSize: 10, fontWeight: '500' },
   mainLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1 },
   addLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.3, marginTop: 24, marginBottom: 10 },
   customCard: { borderRadius: 17, borderWidth: 1, padding: 14, marginTop: 11 },

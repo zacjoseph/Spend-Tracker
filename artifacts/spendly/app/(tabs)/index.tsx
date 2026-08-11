@@ -104,7 +104,7 @@ export default function HomeScreen() {
             <View style={[styles.hero, { backgroundColor: colors.navy }]}>
               <View style={styles.heroTop}>
                 <View>
-              <Text style={[styles.heroLabel, { color: colors.navyMuted }]}>SPENT THIS MONTH</Text>
+              <Text style={[styles.heroLabel, { color: colors.accentForeground }]}>SPENT THIS MONTH</Text>
                   <Text style={[styles.heroAmount, { color: '#ffffff' }]}>{formatAmount(monthlyTotal)}</Text>
                 </View>
                 <View style={[styles.heroIcon, { backgroundColor: colors.navyMuted + '33' }]}>
@@ -112,7 +112,7 @@ export default function HomeScreen() {
                 </View>
               </View>
               <View style={styles.heroFooter}>
-                <Text style={[styles.heroMonth, { color: colors.navyMuted }]}>{monthName}</Text>
+                <Text style={[styles.heroMonth, { color: colors.accentForeground }]}>{monthName}</Text>
                 <Text style={[styles.heroHint, { color: colors.accent }]}>Keep it simple</Text>
               </View>
             </View>

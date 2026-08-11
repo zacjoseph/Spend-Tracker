@@ -1,7 +1,7 @@
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Expense, useSpending } from '@/context/SpendingContext';
 import { useColors } from '@/hooks/useColors';
@@ -18,7 +18,7 @@ function getIntensity(amount: number, maximum: number) {
   return Math.max(0.18, Math.min(1, amount / maximum));
 }
 
-function BillRow({ expense }: { expense: Expense }) {
+function BillRow({ expense, onRemove }: { expense: Expense; onRemove: (id: string) => void }) {
   const colors = useColors();
   const { formatAmount, convertAmount, mainCurrency } = useSpending();
   const icon = expense.category === 'Rent' ? 'home' : expense.category === 'Electricity' ? 'zap' : expense.category === 'Internet' ? 'wifi' : expense.category === 'Phone' ? 'smartphone' : 'more-horizontal';
@@ -40,6 +40,20 @@ function BillRow({ expense }: { expense: Expense }) {
           </Text>
         )}
       </View>
+      <Pressable
+        testID={`monthly-delete-expense-${expense.id}`}
+        accessibilityLabel={`Delete ${expense.category}`}
+        hitSlop={10}
+        onPress={() =>
+          Alert.alert('Remove monthly expense?', 'This entry will be removed from your spending totals.', [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Remove', style: 'destructive', onPress: () => onRemove(expense.id) },
+          ])
+        }
+        style={({ pressed }) => [styles.deleteButton, { opacity: pressed ? 0.45 : 0.75 }]}
+      >
+        <Feather name="trash-2" size={17} color={colors.mutedForeground} />
+      </Pressable>
     </View>
   );
 }
@@ -47,7 +61,7 @@ function BillRow({ expense }: { expense: Expense }) {
 export default function MonthlyScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { expenses, mainCurrency, formatAmount, convertAmount } = useSpending();
+  const { expenses, mainCurrency, formatAmount, convertAmount, removeExpense } = useSpending();
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState(currentYear);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
@@ -160,7 +174,7 @@ export default function MonthlyScreen() {
             <Text style={[styles.sectionHint, { color: colors.mutedForeground }]}>{expenses.filter((expense) => expense.type === 'monthly' && monthKey(expense.date) === `${year}-${selectedMonth}`).length} entries</Text>
           </View>
           {expenses.filter((expense) => expense.type === 'monthly' && monthKey(expense.date) === `${year}-${selectedMonth}`).map((expense) => (
-            <BillRow key={expense.id} expense={expense} />
+            <BillRow key={expense.id} expense={expense} onRemove={removeExpense} />
           ))}
         </>
       )}
@@ -206,4 +220,5 @@ const styles = StyleSheet.create({
   billAmountCopy: { alignItems: 'flex-end', minWidth: 76 },
   billAmount: { fontSize: 13, fontWeight: '700' },
   billConverted: { fontSize: 10, fontWeight: '500', marginTop: 3 },
+  deleteButton: { paddingLeft: 2, paddingVertical: 8 },
 });
