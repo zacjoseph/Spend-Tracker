@@ -1,6 +1,6 @@
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Keyboard,
   Modal,
@@ -42,7 +42,7 @@ const monthlyCategories = [
 export function QuickAddSheet({ visible, initialType = 'daily', onClose }: Props) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { addExpense, availableCurrencies, entryCurrency, setEntryCurrency } = useSpending();
+  const { addExpense, availableCurrencies, currencyOptions, entryCurrency, mainCurrency, convertAmount, formatAmount, setEntryCurrency } = useSpending();
   const [type, setType] = useState<ExpenseType>(initialType);
   const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState<CurrencyCode>(entryCurrency);
@@ -50,7 +50,17 @@ export function QuickAddSheet({ visible, initialType = 'daily', onClose }: Props
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    if (!visible) return;
+    setType(initialType);
+    setCategory(initialType === 'daily' ? 'Food' : 'Rent');
+    setError('');
+  }, [visible, initialType]);
+
   const categories = type === 'daily' ? dailyCategories : monthlyCategories;
+  const parsedAmount = Number(amount.replace(',', '.'));
+  const hasValidAmount = Number.isFinite(parsedAmount) && parsedAmount > 0;
+  const selectedCurrency = currencyOptions.find((option) => option.code === currency);
 
   const switchType = (nextType: ExpenseType) => {
     setType(nextType);
@@ -126,7 +136,7 @@ export function QuickAddSheet({ visible, initialType = 'daily', onClose }: Props
 
             <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>AMOUNT</Text>
             <View style={[styles.amountField, { backgroundColor: colors.card, borderColor: error ? colors.destructive : colors.border }]}>
-              <Text style={[styles.currency, { color: colors.mutedForeground }]}>{currency === 'USD' ? '$' : currency === 'UGX' ? 'USh' : currency}</Text>
+              <Text style={[styles.currency, { color: colors.mutedForeground }]}>{selectedCurrency?.symbol ?? currency}</Text>
               <TextInput
                 autoFocus
                 testID="expense-amount"
@@ -142,6 +152,11 @@ export function QuickAddSheet({ visible, initialType = 'daily', onClose }: Props
                 returnKeyType="next"
               />
             </View>
+            {hasValidAmount && currency !== mainCurrency && (
+              <Text style={[styles.conversionPreview, { color: colors.mutedForeground }]}>
+                ≈ {formatAmount(convertAmount(parsedAmount, currency), mainCurrency)} in {mainCurrency}
+              </Text>
+            )}
             {!!error && <Text style={[styles.error, { color: colors.destructive }]}>{error}</Text>}
 
             <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>CURRENCY</Text>
@@ -226,6 +241,7 @@ const styles = StyleSheet.create({
   currency: { fontSize: 29, fontWeight: '600', marginRight: 8 },
   amountInput: { flex: 1, fontSize: 34, fontWeight: '700', letterSpacing: -1 },
   error: { fontSize: 12, marginTop: -5 },
+  conversionPreview: { fontSize: 11, fontWeight: '600', marginTop: -5, marginLeft: 4 },
   currencyList: { gap: 8, paddingVertical: 1 },
   currencyChip: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 13, paddingVertical: 9 },
   currencyChipCode: { fontSize: 12, fontWeight: '700', letterSpacing: 0.4 },

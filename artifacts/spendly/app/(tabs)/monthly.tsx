@@ -3,7 +3,7 @@ import * as Haptics from 'expo-haptics';
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useSpending } from '@/context/SpendingContext';
+import { Expense, useSpending } from '@/context/SpendingContext';
 import { useColors } from '@/hooks/useColors';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -16,6 +16,32 @@ function monthKey(dateString: string) {
 function getIntensity(amount: number, maximum: number) {
   if (!amount || !maximum) return 0;
   return Math.max(0.18, Math.min(1, amount / maximum));
+}
+
+function BillRow({ expense }: { expense: Expense }) {
+  const colors = useColors();
+  const { formatAmount, convertAmount, mainCurrency } = useSpending();
+  const icon = expense.category === 'Rent' ? 'home' : expense.category === 'Electricity' ? 'zap' : expense.category === 'Internet' ? 'wifi' : expense.category === 'Phone' ? 'smartphone' : 'more-horizontal';
+
+  return (
+    <View style={[styles.billRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <View style={[styles.billIcon, { backgroundColor: colors.accent }]}>
+        <Feather name={icon as React.ComponentProps<typeof Feather>['name']} size={18} color={colors.accentForeground} />
+      </View>
+      <View style={styles.billCopy}>
+        <Text style={[styles.billTitle, { color: colors.foreground }]}>{expense.category}</Text>
+        <Text style={[styles.billMeta, { color: colors.mutedForeground }]}>{expense.note || 'Monthly bill'}</Text>
+      </View>
+      <View style={styles.billAmountCopy}>
+        <Text style={[styles.billAmount, { color: colors.foreground }]}>{formatAmount(expense.amount, expense.currency)}</Text>
+        {expense.currency !== mainCurrency && (
+          <Text style={[styles.billConverted, { color: colors.mutedForeground }]}>
+            ≈ {formatAmount(convertAmount(expense.amount, expense.currency), mainCurrency)}
+          </Text>
+        )}
+      </View>
+    </View>
+  );
 }
 
 export default function MonthlyScreen() {
@@ -127,6 +153,17 @@ export default function MonthlyScreen() {
         <Text style={[styles.detailAmount, { color: colors.accentForeground }]}>{formatAmount(selectedTotal, mainCurrency)}</Text>
       </View>
       <Text style={[styles.note, { color: colors.mutedForeground }]}>Select a month to compare spending intensity across the year.</Text>
+      {year === currentYear && (
+        <>
+          <View style={styles.billsHeader}>
+            <Text style={[styles.billsTitle, { color: colors.foreground }]}>Bills in {selectedLabel}</Text>
+            <Text style={[styles.sectionHint, { color: colors.mutedForeground }]}>{expenses.filter((expense) => expense.type === 'monthly' && monthKey(expense.date) === `${year}-${selectedMonth}`).length} entries</Text>
+          </View>
+          {expenses.filter((expense) => expense.type === 'monthly' && monthKey(expense.date) === `${year}-${selectedMonth}`).map((expense) => (
+            <BillRow key={expense.id} expense={expense} />
+          ))}
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -158,4 +195,15 @@ const styles = StyleSheet.create({
   detailTitle: { fontSize: 15, fontWeight: '700' },
   detailAmount: { fontSize: 18, fontWeight: '700' },
   note: { fontSize: 11, lineHeight: 17, marginTop: 10 },
+  sectionHint: { fontSize: 11, fontWeight: '500' },
+  billsHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginTop: 25, marginBottom: 10 },
+  billsTitle: { fontSize: 17, fontWeight: '700' },
+  billRow: { minHeight: 72, borderRadius: 16, borderWidth: 1, padding: 13, flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 9 },
+  billIcon: { width: 41, height: 41, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  billCopy: { flex: 1 },
+  billTitle: { fontSize: 13, fontWeight: '700', marginBottom: 4 },
+  billMeta: { fontSize: 10, fontWeight: '500' },
+  billAmountCopy: { alignItems: 'flex-end', minWidth: 76 },
+  billAmount: { fontSize: 13, fontWeight: '700' },
+  billConverted: { fontSize: 10, fontWeight: '500', marginTop: 3 },
 });

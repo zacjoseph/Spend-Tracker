@@ -32,7 +32,7 @@ function getDayCells(year: number, month: number) {
 
 function ExpenseRow({ expense, onRemove }: { expense: Expense; onRemove: (id: string) => void }) {
   const colors = useColors();
-  const { formatAmount } = useSpending();
+  const { formatAmount, convertAmount, mainCurrency } = useSpending();
   const icon = expense.type === 'monthly' ? 'calendar' : expense.category === 'Food' ? 'coffee' : expense.category === 'Transport' ? 'navigation' : expense.category === 'Shopping' ? 'shopping-bag' : 'circle';
 
   return (
@@ -44,7 +44,14 @@ function ExpenseRow({ expense, onRemove }: { expense: Expense; onRemove: (id: st
         <Text style={[styles.expenseCategory, { color: colors.foreground }]}>{expense.category}</Text>
         <Text style={[styles.expenseMeta, { color: colors.mutedForeground }]}>{expense.note || (expense.type === 'monthly' ? 'Monthly bill' : 'Daily expense')}</Text>
       </View>
-      <Text style={[styles.expenseAmount, { color: colors.foreground }]}>{formatAmount(expense.amount, expense.currency)}</Text>
+      <View style={styles.expenseAmountCopy}>
+        <Text style={[styles.expenseAmount, { color: colors.foreground }]}>{formatAmount(expense.amount, expense.currency)}</Text>
+        {expense.currency !== mainCurrency && (
+          <Text style={[styles.expenseConverted, { color: colors.mutedForeground }]}>
+            ≈ {formatAmount(convertAmount(expense.amount, expense.currency), mainCurrency)}
+          </Text>
+        )}
+      </View>
       <Pressable
         accessibilityLabel={`Delete ${expense.category}`}
         testID={`daily-delete-expense-${expense.id}`}
@@ -223,6 +230,8 @@ const styles = StyleSheet.create({
   expenseCategory: { fontSize: 13, fontWeight: '600', marginBottom: 4 },
   expenseMeta: { fontSize: 10, fontWeight: '500' },
   expenseAmount: { fontSize: 13, fontWeight: '700' },
+  expenseAmountCopy: { alignItems: 'flex-end', minWidth: 76 },
+  expenseConverted: { fontSize: 10, fontWeight: '500', marginTop: 3 },
   empty: { alignItems: 'center', paddingVertical: 27, paddingHorizontal: 16 },
   emptyIcon: { width: 45, height: 45, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 11 },
   emptyTitle: { fontSize: 14, fontWeight: '700', marginBottom: 5 },

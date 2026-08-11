@@ -21,7 +21,7 @@ function formatDate(dateString: string) {
 
 function ExpenseRow({ expense, onRemove }: { expense: Expense; onRemove: (id: string) => void }) {
   const colors = useColors();
-  const { formatAmount } = useSpending();
+  const { formatAmount, convertAmount, mainCurrency } = useSpending();
   const icon = expense.type === 'monthly' ? 'calendar' : expense.category === 'Food' ? 'coffee' : expense.category === 'Transport' ? 'navigation' : expense.category === 'Shopping' ? 'shopping-bag' : 'circle';
   return (
     <View style={[styles.expenseRow, { borderBottomColor: colors.border }]}>
@@ -32,7 +32,14 @@ function ExpenseRow({ expense, onRemove }: { expense: Expense; onRemove: (id: st
         <Text style={[styles.expenseCategory, { color: colors.foreground }]}>{expense.category}</Text>
         <Text style={[styles.expenseMeta, { color: colors.mutedForeground }]}>{expense.note || (expense.type === 'monthly' ? 'Monthly bill' : formatDate(expense.date))}</Text>
       </View>
-      <Text style={[styles.expenseAmount, { color: colors.foreground }]}>{formatAmount(expense.amount, expense.currency)}</Text>
+      <View style={styles.expenseAmountCopy}>
+        <Text style={[styles.expenseAmount, { color: colors.foreground }]}>{formatAmount(expense.amount, expense.currency)}</Text>
+        {expense.currency !== mainCurrency && (
+          <Text style={[styles.expenseConverted, { color: colors.mutedForeground }]}>
+            ≈ {formatAmount(convertAmount(expense.amount, expense.currency), mainCurrency)}
+          </Text>
+        )}
+      </View>
       <Pressable
         accessibilityLabel={`Delete ${expense.category}`}
         testID={`delete-expense-${expense.id}`}
@@ -97,7 +104,7 @@ export default function HomeScreen() {
             <View style={[styles.hero, { backgroundColor: colors.navy }]}>
               <View style={styles.heroTop}>
                 <View>
-                  <Text style={[styles.heroLabel, { color: colors.navyMuted }]}>TOTAL THIS MONTH</Text>
+              <Text style={[styles.heroLabel, { color: colors.navyMuted }]}>SPENT THIS MONTH</Text>
                   <Text style={[styles.heroAmount, { color: '#ffffff' }]}>{formatAmount(monthlyTotal)}</Text>
                 </View>
                 <View style={[styles.heroIcon, { backgroundColor: colors.navyMuted + '33' }]}>
@@ -114,17 +121,12 @@ export default function HomeScreen() {
               <View style={styles.stat}>
                 <View style={styles.statHeading}>
                   <View style={[styles.statDot, { backgroundColor: colors.primary }]} />
-                  <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>TODAY</Text>
+                  <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>SPENT TODAY</Text>
                 </View>
                 <Text style={[styles.statValue, { color: colors.foreground }]}>{formatAmount(dailyTodayTotal)}</Text>
               </View>
-              <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
-              <View style={styles.stat}>
-                <View style={styles.statHeading}>
-                  <View style={[styles.statDot, { backgroundColor: colors.success }]} />
-                  <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>THIS MONTH</Text>
-                </View>
-                <Text style={[styles.statValue, { color: colors.foreground }]}>{formatAmount(monthlyTotal)}</Text>
+              <View style={[styles.todayStatIcon, { backgroundColor: colors.secondary }]}>
+                <Feather name="sun" size={18} color={colors.primary} />
               </View>
             </View>
 
@@ -201,6 +203,7 @@ const styles = StyleSheet.create({
   stats: { flexDirection: 'row', alignItems: 'center', borderRadius: 17, borderWidth: 1, paddingVertical: 17, paddingHorizontal: 16 },
   stat: { flex: 1 },
   statDivider: { width: 1, height: 38, marginHorizontal: 14 },
+  todayStatIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginLeft: 'auto' },
   statHeading: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 7 },
   statDot: { width: 7, height: 7, borderRadius: 4 },
   statLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.1 },
@@ -220,6 +223,8 @@ const styles = StyleSheet.create({
   expenseCategory: { fontSize: 14, fontWeight: '600', marginBottom: 4 },
   expenseMeta: { fontSize: 11, fontWeight: '500' },
   expenseAmount: { fontSize: 14, fontWeight: '700' },
+  expenseAmountCopy: { alignItems: 'flex-end', minWidth: 76 },
+  expenseConverted: { fontSize: 10, fontWeight: '500', marginTop: 3 },
   deleteButton: { paddingLeft: 3 },
   empty: { alignItems: 'center', borderRadius: 17, borderWidth: 1, paddingVertical: 28, paddingHorizontal: 20, marginTop: 4 },
   emptyIcon: { width: 48, height: 48, borderRadius: 17, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
