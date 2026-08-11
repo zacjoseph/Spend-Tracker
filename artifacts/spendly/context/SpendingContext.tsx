@@ -69,6 +69,7 @@ type SpendingContextValue = {
   addCustomCurrency: (input: { code: string; name: string }) => Promise<AddCustomCurrencyResult>;
   removeCurrency: (currency: CurrencyCode) => void;
   refreshRates: () => Promise<void>;
+  convertAmount: (amount: number, currency: CurrencyCode) => number;
   formatAmount: (amount: number, currency?: CurrencyCode) => string;
 };
 
@@ -219,18 +220,18 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(() => {
     const now = new Date();
     const currencyOptions: CurrencyOption[] = [...CURRENCY_OPTIONS, ...customCurrencies];
-    const convertToMain = (amount: number, currency: CurrencyCode) =>
+    const convertAmount = (amount: number, currency: CurrencyCode) =>
       amount * (ratesToUsd[currency] ?? 1) / (ratesToUsd[mainCurrency] ?? 1);
     const currentMonth = expenses.filter((expense) => isSameMonth(expense.date, now));
     const dailyTodayTotal = expenses
       .filter((expense) => expense.type === 'daily' && isToday(expense.date, now))
-      .reduce((sum, expense) => sum + convertToMain(expense.amount, expense.currency), 0);
+       .reduce((sum, expense) => sum + convertAmount(expense.amount, expense.currency), 0);
     const monthlyBillsTotal = currentMonth
       .filter((expense) => expense.type === 'monthly')
-      .reduce((sum, expense) => sum + convertToMain(expense.amount, expense.currency), 0);
+       .reduce((sum, expense) => sum + convertAmount(expense.amount, expense.currency), 0);
     const monthlyDailyTotal = currentMonth
       .filter((expense) => expense.type === 'daily')
-      .reduce((sum, expense) => sum + convertToMain(expense.amount, expense.currency), 0);
+       .reduce((sum, expense) => sum + convertAmount(expense.amount, expense.currency), 0);
 
     return {
       expenses,
@@ -246,6 +247,7 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
       monthlyBillsTotal,
       monthlyDailyTotal,
       monthlyTotal: monthlyBillsTotal + monthlyDailyTotal,
+      convertAmount,
       addExpense: (input: AddExpenseInput) => {
         const nowString = new Date().toISOString();
         const newExpense: Expense = {

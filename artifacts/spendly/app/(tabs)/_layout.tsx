@@ -19,8 +19,12 @@ function NativeTabLayout() {
         <Icon sf={{ default: 'house', selected: 'house.fill' }} />
         <Label>Home</Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="daily">
+        <Icon sf={{ default: 'calendar.day.timeline.left', selected: 'calendar.day.timeline.left' }} />
+        <Label>Daily</Label>
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="monthly">
-        <Icon sf={{ default: 'calendar', selected: 'calendar' }} />
+        <Icon sf={{ default: 'chart.bar.xaxis', selected: 'chart.bar.xaxis' }} />
         <Label>Monthly</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="settings">
@@ -82,14 +86,26 @@ function ClassicTabLayout() {
         }}
       />
       <Tabs.Screen
-        name="monthly"
+        name="daily"
         options={{
-          title: 'Monthly',
+          title: 'Daily',
           tabBarIcon: ({ color }) =>
             isIOS ? (
               <SymbolView name="calendar" tintColor={color} size={23} />
             ) : (
               <Feather name="calendar" size={21} color={color} />
+            ),
+        }}
+      />
+      <Tabs.Screen
+        name="monthly"
+        options={{
+          title: 'Monthly',
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="chart.bar.xaxis" tintColor={color} size={23} />
+            ) : (
+              <Feather name="bar-chart-2" size={21} color={color} />
             ),
         }}
       />
