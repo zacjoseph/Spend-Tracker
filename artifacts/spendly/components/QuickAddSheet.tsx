@@ -1,4 +1,5 @@
 import { Feather } from '@expo/vector-icons';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
 import React, { useEffect, useState } from 'react';
 import {
@@ -16,10 +17,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useColors } from '@/hooks/useColors';
 import { CurrencyCode, ExpenseType, useSpending } from '@/context/SpendingContext';
+import { formatAmountInput, parseAmountInput } from '@/utils/amountInput';
+import { formatExpenseDateLabel, startOfLocalDay } from '@/utils/expenseDate';
 
 type Props = {
   visible: boolean;
   initialType?: ExpenseType;
+  initialDate?: Date;
   onClose: () => void;
 };
 
@@ -39,7 +43,7 @@ const monthlyCategories = [
   { label: 'Other', icon: 'more-horizontal' },
 ];
 
-export function QuickAddSheet({ visible, initialType = 'daily', onClose }: Props) {
+export function QuickAddSheet({ visible, initialType = 'daily', initialDate, onClose }: Props) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { addExpense, availableCurrencies, currencyOptions, entryCurrency, mainCurrency, convertAmount, formatAmount, setEntryCurrency } = useSpending();
@@ -49,16 +53,20 @@ export function QuickAddSheet({ visible, initialType = 'daily', onClose }: Props
   const [category, setCategory] = useState(initialType === 'daily' ? 'Food' : 'Rent');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
+  const [expenseDate, setExpenseDate] = useState(() => startOfLocalDay(initialDate ?? new Date()));
+  const [showDatePicker, setShowDatePicker] = useState(false);
 
   useEffect(() => {
     if (!visible) return;
     setType(initialType);
     setCategory(initialType === 'daily' ? 'Food' : 'Rent');
+    setExpenseDate(startOfLocalDay(initialDate ?? new Date()));
+    setShowDatePicker(false);
     setError('');
-  }, [visible, initialType]);
+  }, [visible, initialType, initialDate]);
 
   const categories = type === 'daily' ? dailyCategories : monthlyCategories;
-  const parsedAmount = Number(amount.replace(',', '.'));
+  const parsedAmount = parseAmountInput(amount);
   const hasValidAmount = Number.isFinite(parsedAmount) && parsedAmount > 0;
   const selectedCurrency = currencyOptions.find((option) => option.code === currency);
 
@@ -76,17 +84,32 @@ export function QuickAddSheet({ visible, initialType = 'daily', onClose }: Props
     setCurrency(nextCurrency);
     setType(initialType);
     setCategory(initialType === 'daily' ? 'Food' : 'Rent');
+    setExpenseDate(startOfLocalDay(initialDate ?? new Date()));
+    setShowDatePicker(false);
     onClose();
   };
 
+  const handleDateChange = (event: DateTimePickerEvent, nextDate?: Date) => {
+    if (Platform.OS === 'android') setShowDatePicker(false);
+    if (event.type === 'dismissed' || !nextDate) return;
+    setExpenseDate(startOfLocalDay(nextDate));
+  };
+
+  const setQuickDate = (offsetDays: number) => {
+    const nextDate = startOfLocalDay();
+    nextDate.setDate(nextDate.getDate() + offsetDays);
+    setExpenseDate(nextDate);
+    Haptics.selectionAsync().catch(() => undefined);
+  };
+
   const save = () => {
-    const parsedAmount = Number(amount.replace(',', '.'));
+    const parsedAmount = parseAmountInput(amount);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       setError('Enter an amount greater than zero.');
       return;
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-    addExpense({ type, amount: parsedAmount, currency, category, note: note.trim() });
+    addExpense({ type, amount: parsedAmount, currency, category, note: note.trim(), date: expenseDate });
     setEntryCurrency(currency);
     close(currency);
   };
@@ -134,6 +157,60 @@ export function QuickAddSheet({ visible, initialType = 'daily', onClose }: Props
               ))}
             </View>
 
+            <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>DATE</Text>
+            <View style={[styles.dateCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Pressable
+                testID="expense-date-toggle"
+                accessibilityLabel="Change expense date"
+                onPress={() => setShowDatePicker((current) => !current)}
+                style={({ pressed }) => [styles.dateRow, { opacity: pressed ? 0.7 : 1 }]}
+              >
+                <View style={[styles.dateIcon, { backgroundColor: colors.secondary }]}>
+                  <Feather name="calendar" size={16} color={colors.primary} />
+                </View>
+                <View style={styles.dateCopy}>
+                  <Text style={[styles.dateLabel, { color: colors.foreground }]}>{formatExpenseDateLabel(expenseDate)}</Text>
+                  <Text style={[styles.dateMeta, { color: colors.mutedForeground }]}>
+                    {expenseDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                  </Text>
+                </View>
+                <Feather name={showDatePicker ? 'chevron-up' : 'chevron-down'} size={18} color={colors.mutedForeground} />
+              </Pressable>
+              <View style={styles.quickDates}>
+                <Pressable
+                  testID="expense-date-yesterday"
+                  onPress={() => setQuickDate(-1)}
+                  style={({ pressed }) => [styles.quickDateChip, { backgroundColor: colors.secondary, opacity: pressed ? 0.7 : 1 }]}
+                >
+                  <Text style={[styles.quickDateText, { color: colors.foreground }]}>Yesterday</Text>
+                </Pressable>
+                <Pressable
+                  testID="expense-date-today"
+                  onPress={() => setQuickDate(0)}
+                  style={({ pressed }) => [styles.quickDateChip, { backgroundColor: colors.secondary, opacity: pressed ? 0.7 : 1 }]}
+                >
+                  <Text style={[styles.quickDateText, { color: colors.foreground }]}>Today</Text>
+                </Pressable>
+                <Pressable
+                  testID="expense-date-tomorrow"
+                  onPress={() => setQuickDate(1)}
+                  style={({ pressed }) => [styles.quickDateChip, { backgroundColor: colors.secondary, opacity: pressed ? 0.7 : 1 }]}
+                >
+                  <Text style={[styles.quickDateText, { color: colors.foreground }]}>Tomorrow</Text>
+                </Pressable>
+              </View>
+              {showDatePicker && (
+                <DateTimePicker
+                  testID="expense-date-picker"
+                  value={expenseDate}
+                  mode="date"
+                  display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                  onChange={handleDateChange}
+                  style={styles.datePicker}
+                />
+              )}
+            </View>
+
             <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>AMOUNT</Text>
             <View style={[styles.amountField, { backgroundColor: colors.card, borderColor: error ? colors.destructive : colors.border }]}>
               <Text style={[styles.currency, { color: colors.mutedForeground }]}>{selectedCurrency?.symbol ?? currency}</Text>
@@ -142,7 +219,7 @@ export function QuickAddSheet({ visible, initialType = 'daily', onClose }: Props
                 testID="expense-amount"
                 value={amount}
                 onChangeText={(value) => {
-                  setAmount(value);
+                  setAmount(formatAmountInput(value));
                   if (error) setError('');
                 }}
                 placeholder="0.00"
@@ -236,6 +313,16 @@ const styles = StyleSheet.create({
   typeSwitch: { flexDirection: 'row', borderRadius: 12, padding: 4, marginBottom: 8 },
   typeOption: { flex: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 9, paddingVertical: 11 },
   typeOptionText: { fontSize: 13, fontWeight: '600' },
+  dateCard: { borderWidth: 1, borderRadius: 15, overflow: 'hidden', marginBottom: 4 },
+  dateRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 11, paddingHorizontal: 14, paddingVertical: 12 },
+  dateIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  dateCopy: { flex: 1 },
+  dateLabel: { fontSize: 14, fontWeight: '700', marginBottom: 3 },
+  dateMeta: { fontSize: 11, fontWeight: '500' },
+  quickDates: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingBottom: 12 },
+  quickDateChip: { flex: 1, minHeight: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  quickDateText: { fontSize: 11, fontWeight: '700' },
+  datePicker: { marginHorizontal: 8, marginBottom: 8 },
   fieldLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.3, marginTop: 7, marginBottom: 2 },
   amountField: { height: 68, borderWidth: 1, borderRadius: 15, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18 },
   currency: { fontSize: 29, fontWeight: '600', marginRight: 8 },

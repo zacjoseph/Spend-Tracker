@@ -7,13 +7,6 @@ import { QuickAddSheet } from '@/components/QuickAddSheet';
 import { Expense, useSpending } from '@/context/SpendingContext';
 import { useColors } from '@/hooks/useColors';
 
-function getGreeting() {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 18) return 'Good afternoon';
-  return 'Good evening';
-}
-
 function formatDate(dateString: string) {
   const date = new Date(dateString);
   return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -61,7 +54,7 @@ function ExpenseRow({ expense, onRemove }: { expense: Expense; onRemove: (id: st
 export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { expenses, isLoaded, dailyTodayTotal, monthlyTotal, formatAmount, removeExpense } = useSpending();
+  const { expenses, isLoaded, dailyTodayTotal, effectiveDailyTodayTotal, monthlyDailyShare, monthlyTotal, spreadMonthlyIntoDaily, formatAmount, removeExpense } = useSpending();
   const [isAddVisible, setIsAddVisible] = useState(false);
   const [addType, setAddType] = useState<'daily' | 'monthly'>('daily');
   const recent = useMemo(() => expenses.slice(0, 8), [expenses]);
@@ -92,42 +85,27 @@ export default function HomeScreen() {
         ListHeaderComponent={
           <>
             <View style={styles.header}>
-              <View>
-                <Text style={[styles.greeting, { color: colors.mutedForeground }]}>{getGreeting()}</Text>
-                <Text style={[styles.title, { color: colors.foreground }]}>Your spending</Text>
-              </View>
-              <View style={[styles.avatar, { backgroundColor: colors.accent }]}>
-                <Text style={[styles.avatarText, { color: colors.accentForeground }]}>S</Text>
-              </View>
+              <Text style={[styles.title, { color: colors.foreground }]}>Your spending</Text>
             </View>
 
             <View style={[styles.hero, { backgroundColor: colors.navy }]}>
-              <View style={styles.heroTop}>
-                <View>
               <Text style={[styles.heroLabel, { color: colors.accentForeground }]}>SPENT THIS MONTH</Text>
-                  <Text style={[styles.heroAmount, { color: '#ffffff' }]}>{formatAmount(monthlyTotal)}</Text>
-                </View>
-                <View style={[styles.heroIcon, { backgroundColor: colors.navyMuted + '33' }]}>
-                  <Feather name="trending-up" size={20} color={colors.accent} />
-                </View>
-              </View>
-              <View style={styles.heroFooter}>
-                <Text style={[styles.heroMonth, { color: colors.accentForeground }]}>{monthName}</Text>
-                <Text style={[styles.heroHint, { color: colors.accent }]}>Keep it simple</Text>
-              </View>
+              <Text style={[styles.heroAmount, { color: '#ffffff' }]}>{formatAmount(monthlyTotal)}</Text>
+              <Text style={[styles.heroMonth, { color: colors.accentForeground }]}>{monthName}</Text>
             </View>
 
             <View style={[styles.stats, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <View style={styles.stat}>
-                <View style={styles.statHeading}>
-                  <View style={[styles.statDot, { backgroundColor: colors.primary }]} />
-                  <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>SPENT TODAY</Text>
-                </View>
-                <Text style={[styles.statValue, { color: colors.foreground }]}>{formatAmount(dailyTodayTotal)}</Text>
-              </View>
-              <View style={[styles.todayStatIcon, { backgroundColor: colors.secondary }]}>
-                <Feather name="sun" size={18} color={colors.primary} />
-              </View>
+              <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
+                {spreadMonthlyIntoDaily ? 'TODAY INCL. BILLS' : 'SPENT TODAY'}
+              </Text>
+              <Text style={[styles.statValue, { color: colors.foreground }]}>
+                {formatAmount(spreadMonthlyIntoDaily ? effectiveDailyTodayTotal : dailyTodayTotal)}
+              </Text>
+              {spreadMonthlyIntoDaily && monthlyDailyShare > 0 && (
+                <Text style={[styles.statHint, { color: colors.mutedForeground }]}>
+                  Includes {formatAmount(monthlyDailyShare)}/day from monthly bills
+                </Text>
+              )}
             </View>
 
             <View style={styles.quickHeader}>
@@ -141,7 +119,7 @@ export default function HomeScreen() {
                 style={({ pressed }) => [styles.quickAction, { backgroundColor: colors.primary, opacity: pressed ? 0.82 : 1 }]}
               >
                 <View style={[styles.quickIcon, { backgroundColor: colors.primaryForeground + '26' }]}>
-                  <Feather name="plus" size={20} color={colors.primaryForeground} />
+                  <Feather name="calendar" size={20} color={colors.primaryForeground} />
                 </View>
                 <View>
                   <Text style={[styles.quickActionTitle, { color: colors.primaryForeground }]}>Daily expense</Text>
@@ -154,7 +132,7 @@ export default function HomeScreen() {
                 style={({ pressed }) => [styles.quickAction, { backgroundColor: colors.accent, opacity: pressed ? 0.82 : 1 }]}
               >
                 <View style={[styles.quickIcon, { backgroundColor: colors.accentForeground + '18' }]}>
-                  <Feather name="calendar" size={18} color={colors.accentForeground} />
+                  <Feather name="bar-chart-2" size={18} color={colors.accentForeground} />
                 </View>
                 <View>
                   <Text style={[styles.quickActionTitle, { color: colors.accentForeground }]}>Monthly bill</Text>
@@ -187,27 +165,16 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 },
-  greeting: { fontSize: 13, fontWeight: '500', marginBottom: 4 },
-  title: { fontSize: 29, fontWeight: '700', letterSpacing: -0.8 },
-  avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontSize: 18, fontWeight: '700' },
-  hero: { borderRadius: 22, padding: 20, marginBottom: 12 },
-  heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  heroLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.4, marginBottom: 9 },
-  heroAmount: { fontSize: 37, fontWeight: '700', letterSpacing: -1.1 },
-  heroIcon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  heroFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 20 },
-  heroMonth: { fontSize: 12, fontWeight: '600' },
-  heroHint: { fontSize: 12, fontWeight: '600' },
-  stats: { flexDirection: 'row', alignItems: 'center', borderRadius: 17, borderWidth: 1, paddingVertical: 17, paddingHorizontal: 16 },
-  stat: { flex: 1 },
-  statDivider: { width: 1, height: 38, marginHorizontal: 14 },
-  todayStatIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginLeft: 'auto' },
-  statHeading: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 7 },
-  statDot: { width: 7, height: 7, borderRadius: 4 },
-  statLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.1 },
-  statValue: { fontSize: 19, fontWeight: '700', letterSpacing: -0.3 },
+  header: { marginBottom: 24 },
+  title: { fontSize: 31, fontWeight: '700', letterSpacing: -0.8 },
+  hero: { borderRadius: 22, padding: 20, marginBottom: 12, gap: 8 },
+  heroLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 1.4 },
+  heroAmount: { fontSize: 40, fontWeight: '700', letterSpacing: -1.1 },
+  heroMonth: { fontSize: 13, fontWeight: '600', marginTop: 4 },
+  stats: { borderRadius: 17, borderWidth: 1, paddingVertical: 18, paddingHorizontal: 18, gap: 8 },
+  statLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 1.1 },
+  statValue: { fontSize: 26, fontWeight: '700', letterSpacing: -0.4 },
+  statHint: { fontSize: 11, fontWeight: '500', lineHeight: 15 },
   quickHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginTop: 27, marginBottom: 12 },
   sectionTitle: { fontSize: 17, fontWeight: '700', letterSpacing: -0.2 },
   sectionHint: { fontSize: 12, fontWeight: '500' },

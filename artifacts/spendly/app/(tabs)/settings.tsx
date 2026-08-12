@@ -1,10 +1,12 @@
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import React, { useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CurrencyCode, useSpending } from '@/context/SpendingContext';
 import { useColors } from '@/hooks/useColors';
+import { summarizeBackup, parseBackup, type SpendlyBackup } from '@/utils/backup';
+import { exportBackupFile, pickBackupFile } from '@/utils/backupFile';
 
 function formatUpdated(value: string | null) {
   if (!value) return 'Using saved reference rates';
@@ -25,11 +27,20 @@ export default function SettingsScreen() {
     lastRateUpdated,
     rateStatus,
     refreshRates,
+    createBackup,
+    importBackup,
+    clearAllExpenses,
+    expenses,
+    spreadMonthlyIntoDaily,
+    setSpreadMonthlyIntoDaily,
   } = useSpending();
   const [customCode, setCustomCode] = useState('');
   const [customName, setCustomName] = useState('');
   const [customError, setCustomError] = useState('');
   const [isAddingCurrency, setIsAddingCurrency] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [backupMessage, setBackupMessage] = useState('');
 
   const chooseMainCurrency = (currency: CurrencyCode) => {
     Haptics.selectionAsync().catch(() => undefined);
@@ -57,6 +68,103 @@ export default function SettingsScreen() {
     setCustomCode('');
     setCustomName('');
     setCustomError('');
+  };
+
+  const exportData = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setBackupMessage('');
+    const result = await exportBackupFile(createBackup());
+    setIsExporting(false);
+    if (result.success) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      setBackupMessage(`Exported ${expenses.length} expenses as JSON.`);
+      return;
+    }
+    setBackupMessage(result.message);
+  };
+
+  const finishImport = (mode: 'replace' | 'merge', backup: SpendlyBackup) => {
+    const result = importBackup(backup, mode);
+    setIsImporting(false);
+    if (result.success) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+    }
+    setBackupMessage(result.message);
+  };
+
+  const importData = async () => {
+    if (isImporting) return;
+    setIsImporting(true);
+    setBackupMessage('');
+    const picked = await pickBackupFile();
+    if (!picked.success) {
+      setIsImporting(false);
+      if (picked.message !== 'Import canceled.') setBackupMessage(picked.message);
+      return;
+    }
+
+    const parsed = parseBackup(picked.content);
+    if (!parsed.success) {
+      setIsImporting(false);
+      setBackupMessage(parsed.message);
+      return;
+    }
+
+    const summary = summarizeBackup(parsed.backup);
+    Alert.alert(
+      'Import backup?',
+      `Found ${summary.expenseCount} expenses exported on ${summary.dateLabel}. Replace everything on this device, or merge in only new expenses?`,
+      [
+        { text: 'Cancel', style: 'cancel', onPress: () => setIsImporting(false) },
+        {
+          text: 'Merge',
+          onPress: () => finishImport('merge', parsed.backup),
+        },
+        {
+          text: 'Replace all',
+          style: 'destructive',
+          onPress: () => finishImport('replace', parsed.backup),
+        },
+      ],
+    );
+  };
+
+  const confirmDeleteAllExpenses = () => {
+    if (!expenses.length) {
+      setBackupMessage('There are no expenses to delete.');
+      return;
+    }
+
+    Alert.alert(
+      'Delete all expenses?',
+      `This will permanently remove all ${expenses.length} daily and monthly entries from this device. This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete all',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Are you sure?',
+              'Every expense will be erased from this phone. Export a backup first if you want to keep a copy.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Yes, delete everything',
+                  style: 'destructive',
+                  onPress: () => {
+                    clearAllExpenses();
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+                    setBackupMessage('All expenses have been deleted.');
+                  },
+                },
+              ],
+            );
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -221,6 +329,92 @@ export default function SettingsScreen() {
           {rateStatus === 'refreshing' ? <ActivityIndicator size="small" color={colors.primary} /> : <Feather name="refresh-cw" size={17} color={colors.primary} />}
         </Pressable>
       </View>
+
+      <Text style={[styles.sectionTitle, { color: colors.foreground, marginTop: 30 }]}>Daily view</Text>
+      <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>
+        Spread this month’s bills evenly across each day so daily totals reflect your true cost of living.
+      </Text>
+      <View style={[styles.spreadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={styles.spreadCopy}>
+          <Text style={[styles.spreadTitle, { color: colors.foreground }]}>Include monthly bills in daily totals</Text>
+          <Text style={[styles.spreadMeta, { color: colors.mutedForeground }]}>
+            Rent logged on the 15th still counts for the whole month — divided by days in that month, not only payment day.
+          </Text>
+        </View>
+        <Switch
+          testID="spread-monthly-toggle"
+          accessibilityLabel="Include monthly bills in daily totals"
+          value={spreadMonthlyIntoDaily}
+          onValueChange={(value) => {
+            Haptics.selectionAsync().catch(() => undefined);
+            setSpreadMonthlyIntoDaily(value);
+          }}
+          trackColor={{ false: colors.border, true: colors.primary }}
+          thumbColor="#ffffff"
+        />
+      </View>
+
+      <Text style={[styles.sectionTitle, { color: colors.foreground, marginTop: 30 }]}>Backup & restore</Text>
+      <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>
+        Save a JSON backup to move data between phones or keep a copy while traveling. JSON keeps expenses, currencies, and exchange rates together.
+      </Text>
+      <View style={[styles.backupCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Pressable
+          testID="export-backup"
+          accessibilityLabel="Export backup"
+          onPress={exportData}
+          disabled={isExporting || isImporting}
+          style={({ pressed }) => [styles.backupButton, { backgroundColor: colors.secondary, opacity: pressed || isExporting ? 0.65 : 1 }]}
+        >
+          {isExporting ? <ActivityIndicator size="small" color={colors.primary} /> : <Feather name="upload" size={17} color={colors.primary} />}
+          <View style={styles.backupCopy}>
+            <Text style={[styles.backupTitle, { color: colors.foreground }]}>Export backup</Text>
+            <Text style={[styles.backupMeta, { color: colors.mutedForeground }]}>{expenses.length} expenses · JSON file</Text>
+          </View>
+        </Pressable>
+        <View style={[styles.backupDivider, { backgroundColor: colors.border }]} />
+        <Pressable
+          testID="import-backup"
+          accessibilityLabel="Import backup"
+          onPress={importData}
+          disabled={isExporting || isImporting}
+          style={({ pressed }) => [styles.backupButton, { backgroundColor: colors.secondary, opacity: pressed || isImporting ? 0.65 : 1 }]}
+        >
+          {isImporting ? <ActivityIndicator size="small" color={colors.primary} /> : <Feather name="download" size={17} color={colors.primary} />}
+          <View style={styles.backupCopy}>
+            <Text style={[styles.backupTitle, { color: colors.foreground }]}>Import backup</Text>
+            <Text style={[styles.backupMeta, { color: colors.mutedForeground }]}>Replace all data or merge new expenses</Text>
+          </View>
+        </Pressable>
+      </View>
+      {!!backupMessage && <Text style={[styles.backupMessage, { color: colors.mutedForeground }]}>{backupMessage}</Text>}
+
+      <Text style={[styles.sectionTitle, { color: colors.foreground, marginTop: 30 }]}>Data</Text>
+      <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>
+        Permanently remove all logged expenses from this device.
+      </Text>
+      <Pressable
+        testID="delete-all-expenses"
+        accessibilityLabel="Delete all expenses"
+        onPress={confirmDeleteAllExpenses}
+        disabled={!expenses.length}
+        style={({ pressed }) => [
+          styles.deleteAllButton,
+          {
+            backgroundColor: colors.card,
+            borderColor: colors.destructive,
+            opacity: pressed ? 0.7 : expenses.length ? 1 : 0.45,
+          },
+        ]}
+      >
+        <Feather name="trash-2" size={17} color={colors.destructive} />
+        <View style={styles.backupCopy}>
+          <Text style={[styles.deleteAllTitle, { color: colors.destructive }]}>Delete all expenses</Text>
+          <Text style={[styles.backupMeta, { color: colors.mutedForeground }]}>
+            {expenses.length ? `${expenses.length} entries will be removed` : 'No expenses to delete'}
+          </Text>
+        </View>
+      </Pressable>
     </ScrollView>
   );
 }
@@ -275,4 +469,26 @@ const styles = StyleSheet.create({
   ratesTitle: { fontSize: 12, fontWeight: '700', marginBottom: 4 },
   ratesMeta: { fontSize: 10, fontWeight: '500' },
   refreshButton: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  spreadCard: {
+    borderRadius: 17,
+    borderWidth: 1,
+    marginTop: 15,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  spreadCopy: { flex: 1 },
+  spreadTitle: { fontSize: 13, fontWeight: '700', marginBottom: 5 },
+  spreadMeta: { fontSize: 10, fontWeight: '500', lineHeight: 15 },
+  backupCard: { borderRadius: 17, borderWidth: 1, marginTop: 15, overflow: 'hidden' },
+  backupButton: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12 },
+  backupCopy: { flex: 1 },
+  backupTitle: { fontSize: 13, fontWeight: '700', marginBottom: 4 },
+  backupMeta: { fontSize: 10, fontWeight: '500', lineHeight: 15 },
+  backupDivider: { height: 1 },
+  backupMessage: { fontSize: 11, lineHeight: 16, marginTop: 10 },
+  deleteAllButton: { minHeight: 68, borderRadius: 17, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, marginTop: 15 },
+  deleteAllTitle: { fontSize: 13, fontWeight: '700', marginBottom: 4 },
 });

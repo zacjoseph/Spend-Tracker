@@ -3,6 +3,7 @@ import * as Haptics from 'expo-haptics';
 import React, { useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { QuickAddSheet } from '@/components/QuickAddSheet';
 import { Expense, useSpending } from '@/context/SpendingContext';
 import { useColors } from '@/hooks/useColors';
 
@@ -65,6 +66,7 @@ export default function MonthlyScreen() {
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState(currentYear);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
+  const [isAddVisible, setIsAddVisible] = useState(false);
 
   const totals = useMemo(() => {
     const byMonth: Record<string, number> = {};
@@ -79,6 +81,13 @@ export default function MonthlyScreen() {
   const maximum = Math.max(0, ...yearTotals);
   const selectedTotal = yearTotals[selectedMonth] ?? 0;
   const selectedLabel = new Date(year, selectedMonth, 1).toLocaleDateString([], { month: 'long', year: 'numeric' });
+  const addExpenseDate = (() => {
+    const now = new Date();
+    if (year === now.getFullYear() && selectedMonth === now.getMonth()) {
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    }
+    return new Date(year, selectedMonth, 1);
+  })();
 
   const moveYear = (offset: number) => {
     setYear((current) => current + offset);
@@ -87,8 +96,9 @@ export default function MonthlyScreen() {
   };
 
   return (
+    <View style={[styles.screen, { backgroundColor: colors.background }]}>
     <ScrollView
-      style={[styles.screen, { backgroundColor: colors.background }]}
+      style={styles.scrollView}
       contentContainerStyle={{ paddingTop: insets.top + 18, paddingBottom: Math.max(insets.bottom, 22) + 90, paddingHorizontal: 20 }}
       showsVerticalScrollIndicator={false}
     >
@@ -97,9 +107,20 @@ export default function MonthlyScreen() {
           <Text style={[styles.eyebrow, { color: colors.primary }]}>YEAR AT A GLANCE</Text>
           <Text style={[styles.title, { color: colors.foreground }]}>Monthly spending</Text>
         </View>
-        <View style={[styles.headerIcon, { backgroundColor: colors.secondary }]}>
-          <Feather name="bar-chart-2" size={20} color={colors.foreground} />
-        </View>
+        <Pressable
+          testID="monthly-add-expense"
+          accessibilityLabel="Add monthly bill"
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+            setIsAddVisible(true);
+          }}
+          style={({ pressed }) => [
+            styles.headerAddButton,
+            { backgroundColor: colors.accent, opacity: pressed ? 0.82 : 1 },
+          ]}
+        >
+          <Feather name="plus" size={22} color={colors.accentForeground} />
+        </Pressable>
       </View>
 
       <View style={[styles.summaryCard, { backgroundColor: colors.navy }]}>
@@ -179,15 +200,18 @@ export default function MonthlyScreen() {
         </>
       )}
     </ScrollView>
+    <QuickAddSheet visible={isAddVisible} initialType="monthly" initialDate={addExpenseDate} onClose={() => setIsAddVisible(false)} />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
+  scrollView: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 24 },
   eyebrow: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, marginBottom: 6 },
   title: { fontSize: 29, fontWeight: '700', letterSpacing: -0.8 },
-  headerIcon: { width: 43, height: 43, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  headerAddButton: { width: 43, height: 43, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   summaryCard: { borderRadius: 21, padding: 20, minHeight: 130, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   summaryLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.4, marginBottom: 8 },
   summaryAmount: { fontSize: 34, fontWeight: '700', letterSpacing: -1 },

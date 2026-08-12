@@ -1,5 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createBackup,
+  mergeExpenses,
+  normalizeBackupData,
+  parseBackup,
+  type SpendlyBackup,
+} from '@/utils/backup';
+import { toExpenseDateString } from '@/utils/expenseDate';
+import { monthlyDailyShare } from '@/utils/monthlySpread';
 
 export type ExpenseType = 'daily' | 'monthly';
 
@@ -46,6 +55,7 @@ type AddExpenseInput = {
   currency: CurrencyCode;
   category: string;
   note: string;
+  date?: Date;
 };
 
 type SpendingContextValue = {
@@ -58,19 +68,30 @@ type SpendingContextValue = {
   ratesToUsd: Record<string, number>;
   lastRateUpdated: string | null;
   rateStatus: 'idle' | 'refreshing' | 'error';
+  spreadMonthlyIntoDaily: boolean;
   dailyTodayTotal: number;
+  /** This month's monthly bills ÷ days in month (home currency). */
+  monthlyDailyShare: number;
+  /** Cash logged today, plus monthlyDailyShare when spreading is on. */
+  effectiveDailyTodayTotal: number;
   monthlyBillsTotal: number;
   monthlyDailyTotal: number;
   monthlyTotal: number;
   addExpense: (input: AddExpenseInput) => void;
   removeExpense: (id: string) => void;
+  clearAllExpenses: () => void;
   setMainCurrency: (currency: CurrencyCode) => void;
   setEntryCurrency: (currency: CurrencyCode) => void;
+  setSpreadMonthlyIntoDaily: (value: boolean) => void;
   addCustomCurrency: (input: { code: string; name: string }) => Promise<AddCustomCurrencyResult>;
   removeCurrency: (currency: CurrencyCode) => void;
   refreshRates: () => Promise<void>;
+  createBackup: () => SpendlyBackup;
+  importBackup: (backup: SpendlyBackup, mode: 'replace' | 'merge') => { success: boolean; message: string; addedCount?: number };
   convertAmount: (amount: number, currency: CurrencyCode) => number;
   formatAmount: (amount: number, currency?: CurrencyCode) => string;
+  getMonthlyBillsTotalForMonth: (year: number, month: number) => number;
+  getMonthlyDailyShareForMonth: (year: number, month: number) => number;
 };
 
 const STORAGE_KEY = '@spendly/data/v2';
@@ -126,6 +147,7 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
   const [ratesToUsd, setRatesToUsd] = useState<Record<string, number>>(FALLBACK_RATES_TO_USD);
   const [lastRateUpdated, setLastRateUpdated] = useState<string | null>(null);
   const [rateStatus, setRateStatus] = useState<'idle' | 'refreshing' | 'error'>('idle');
+  const [spreadMonthlyIntoDaily, setSpreadMonthlyIntoDailyState] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const customCurrenciesRef = useRef(customCurrencies);
   const ratesToUsdRef = useRef(ratesToUsd);
@@ -150,6 +172,7 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
             customCurrencies?: CurrencyOption[];
             ratesToUsd?: Record<string, number>;
             lastRateUpdated?: string | null;
+            spreadMonthlyIntoDaily?: boolean;
           };
           const storedCustomCurrencies = Array.isArray(parsed.customCurrencies)
             ? parsed.customCurrencies
@@ -166,6 +189,9 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
           }
           if (parsed.ratesToUsd) setRatesToUsd({ ...FALLBACK_RATES_TO_USD, ...parsed.ratesToUsd });
           if (parsed.lastRateUpdated) setLastRateUpdated(parsed.lastRateUpdated);
+          if (typeof parsed.spreadMonthlyIntoDaily === 'boolean') {
+            setSpreadMonthlyIntoDailyState(parsed.spreadMonthlyIntoDaily);
+          }
         } else if (legacyStored) {
           const legacyExpenses = JSON.parse(legacyStored) as Omit<Expense, 'currency'>[];
           if (Array.isArray(legacyExpenses)) {
@@ -181,10 +207,29 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
     if (isLoaded) {
       AsyncStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ expenses, mainCurrency, entryCurrency, availableCurrencies, customCurrencies, ratesToUsd, lastRateUpdated }),
+        JSON.stringify({
+          expenses,
+          mainCurrency,
+          entryCurrency,
+          availableCurrencies,
+          customCurrencies,
+          ratesToUsd,
+          lastRateUpdated,
+          spreadMonthlyIntoDaily,
+        }),
       ).catch(() => undefined);
     }
-  }, [expenses, mainCurrency, entryCurrency, availableCurrencies, customCurrencies, ratesToUsd, lastRateUpdated, isLoaded]);
+  }, [
+    expenses,
+    mainCurrency,
+    entryCurrency,
+    availableCurrencies,
+    customCurrencies,
+    ratesToUsd,
+    lastRateUpdated,
+    spreadMonthlyIntoDaily,
+    isLoaded,
+  ]);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -225,13 +270,24 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
     const currentMonth = expenses.filter((expense) => isSameMonth(expense.date, now));
     const dailyTodayTotal = expenses
       .filter((expense) => expense.type === 'daily' && isToday(expense.date, now))
-       .reduce((sum, expense) => sum + convertAmount(expense.amount, expense.currency), 0);
+      .reduce((sum, expense) => sum + convertAmount(expense.amount, expense.currency), 0);
     const monthlyBillsTotal = currentMonth
       .filter((expense) => expense.type === 'monthly')
-       .reduce((sum, expense) => sum + convertAmount(expense.amount, expense.currency), 0);
+      .reduce((sum, expense) => sum + convertAmount(expense.amount, expense.currency), 0);
     const monthlyDailyTotal = currentMonth
       .filter((expense) => expense.type === 'daily')
-       .reduce((sum, expense) => sum + convertAmount(expense.amount, expense.currency), 0);
+      .reduce((sum, expense) => sum + convertAmount(expense.amount, expense.currency), 0);
+    const currentMonthlyDailyShare = monthlyDailyShare(monthlyBillsTotal, now.getFullYear(), now.getMonth());
+    const getMonthlyBillsTotalForMonth = (year: number, month: number) =>
+      expenses
+        .filter((expense) => {
+          if (expense.type !== 'monthly') return false;
+          const date = new Date(expense.date);
+          return date.getFullYear() === year && date.getMonth() === month;
+        })
+        .reduce((sum, expense) => sum + convertAmount(expense.amount, expense.currency), 0);
+    const getMonthlyDailyShareForMonth = (year: number, month: number) =>
+      monthlyDailyShare(getMonthlyBillsTotalForMonth(year, month), year, month);
 
     return {
       expenses,
@@ -243,29 +299,40 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
       ratesToUsd,
       lastRateUpdated,
       rateStatus,
+      spreadMonthlyIntoDaily,
       dailyTodayTotal,
+      monthlyDailyShare: currentMonthlyDailyShare,
+      effectiveDailyTodayTotal: dailyTodayTotal + (spreadMonthlyIntoDaily ? currentMonthlyDailyShare : 0),
       monthlyBillsTotal,
       monthlyDailyTotal,
       monthlyTotal: monthlyBillsTotal + monthlyDailyTotal,
       convertAmount,
+      getMonthlyBillsTotalForMonth,
+      getMonthlyDailyShareForMonth,
       addExpense: (input: AddExpenseInput) => {
-        const nowString = new Date().toISOString();
+        const createdAt = new Date().toISOString();
         const newExpense: Expense = {
           ...input,
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-          date: nowString,
-          createdAt: nowString,
+          date: toExpenseDateString(input.date ?? new Date()),
+          createdAt,
         };
         setExpenses((current) => [newExpense, ...current]);
       },
       removeExpense: (id: string) => {
         setExpenses((current) => current.filter((expense) => expense.id !== id));
       },
+      clearAllExpenses: () => {
+        setExpenses([]);
+      },
       setMainCurrency: (currency: CurrencyCode) => {
         if (availableCurrencies.includes(currency)) setMainCurrencyState(currency);
       },
       setEntryCurrency: (currency: CurrencyCode) => {
         if (availableCurrencies.includes(currency)) setEntryCurrencyState(currency);
+      },
+      setSpreadMonthlyIntoDaily: (value: boolean) => {
+        setSpreadMonthlyIntoDailyState(value);
       },
       addCustomCurrency: async (input: { code: string; name: string }) => {
         const code = input.code.trim().toUpperCase();
@@ -302,6 +369,46 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
         setAvailableCurrencies((current) => current.filter((item) => item !== currency));
         if (entryCurrency === currency) setEntryCurrencyState(mainCurrency);
       },
+      createBackup: () =>
+        createBackup({
+          expenses,
+          mainCurrency,
+          entryCurrency,
+          availableCurrencies,
+          customCurrencies,
+          ratesToUsd,
+          lastRateUpdated,
+          spreadMonthlyIntoDaily,
+        }),
+      importBackup: (backup: SpendlyBackup, mode: 'replace' | 'merge') => {
+        const parsed = parseBackup(JSON.stringify(backup));
+        if (!parsed.success) return { success: false, message: parsed.message };
+        const normalized = normalizeBackupData(parsed.backup.data, FALLBACK_RATES_TO_USD);
+
+        if (mode === 'replace') {
+          setExpenses(normalized.expenses);
+          setMainCurrencyState(normalized.mainCurrency);
+          setEntryCurrencyState(normalized.entryCurrency);
+          setAvailableCurrencies(normalized.availableCurrencies);
+          setCustomCurrencies(normalized.customCurrencies);
+          setRatesToUsd(normalized.ratesToUsd);
+          setLastRateUpdated(normalized.lastRateUpdated);
+          setSpreadMonthlyIntoDailyState(normalized.spreadMonthlyIntoDaily);
+          return {
+            success: true,
+            message: `Restored ${normalized.expenses.length} expenses.`,
+          };
+        }
+
+        const merged = mergeExpenses(expenses, normalized.expenses);
+        const addedCount = merged.length - expenses.length;
+        setExpenses(merged);
+        return {
+          success: true,
+          message: addedCount > 0 ? `Added ${addedCount} new expenses.` : 'No new expenses to add.',
+          addedCount,
+        };
+      },
       refreshRates,
       formatAmount: (amount: number, currency = mainCurrency) => {
         const option = currencyOptions.find((item) => item.code === currency);
@@ -313,7 +420,18 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
         }
       },
     };
-  }, [expenses, isLoaded, mainCurrency, entryCurrency, availableCurrencies, customCurrencies, ratesToUsd, lastRateUpdated, rateStatus]);
+  }, [
+    expenses,
+    isLoaded,
+    mainCurrency,
+    entryCurrency,
+    availableCurrencies,
+    customCurrencies,
+    ratesToUsd,
+    lastRateUpdated,
+    rateStatus,
+    spreadMonthlyIntoDaily,
+  ]);
 
   return <SpendingContext.Provider value={value}>{children}</SpendingContext.Provider>;
 }

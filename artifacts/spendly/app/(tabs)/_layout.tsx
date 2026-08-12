@@ -20,7 +20,7 @@ function NativeTabLayout() {
         <Label>Home</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="daily">
-        <Icon sf={{ default: 'calendar.day.timeline.left', selected: 'calendar.day.timeline.left' }} />
+        <Icon sf={{ default: 'calendar', selected: 'calendar' }} />
         <Label>Daily</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="monthly">
