@@ -1,11 +1,14 @@
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import React, { useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { QuickAddSheet } from '@/components/QuickAddSheet';
 import { Expense, useSpending } from '@/context/SpendingContext';
 import { useColors } from '@/hooks/useColors';
+import { showExpenseActions } from '@/utils/expenseActions';
+import { getCategoryIcon } from '@/utils/categories';
+import { getHeatmapCellColors, LEGEND_OPACITIES, toHexAlpha } from '@/utils/calendarHeatmap';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -17,18 +20,6 @@ function isSameDay(dateString: string, date: Date) {
   return dateKey(new Date(dateString)) === dateKey(date);
 }
 
-function getFillOpacity(amount: number, maximum: number) {
-  if (!amount || !maximum) return 0;
-  const ratio = amount / maximum;
-  return 0.2 + ratio * 0.45;
-}
-
-function toHexAlpha(opacity: number) {
-  return Math.round(Math.max(0, Math.min(1, opacity)) * 255)
-    .toString(16)
-    .padStart(2, '0');
-}
-
 function getDayCells(year: number, month: number) {
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -38,10 +29,10 @@ function getDayCells(year: number, month: number) {
   });
 }
 
-function ExpenseRow({ expense, onRemove }: { expense: Expense; onRemove: (id: string) => void }) {
+function ExpenseRow({ expense, onEdit, onRemove }: { expense: Expense; onEdit: (expense: Expense) => void; onRemove: (id: string) => void }) {
   const colors = useColors();
   const { formatAmount, convertAmount, mainCurrency } = useSpending();
-  const icon = expense.type === 'monthly' ? 'calendar' : expense.category === 'Food' ? 'coffee' : expense.category === 'Transport' ? 'navigation' : expense.category === 'Shopping' ? 'shopping-bag' : 'circle';
+  const icon = expense.type === 'monthly' ? 'calendar' : getCategoryIcon(expense.category, expense.type);
 
   return (
     <View style={[styles.expenseRow, { borderBottomColor: colors.border }]}>
@@ -61,15 +52,10 @@ function ExpenseRow({ expense, onRemove }: { expense: Expense; onRemove: (id: st
         )}
       </View>
       <Pressable
-        accessibilityLabel={`Delete ${expense.category}`}
-        testID={`daily-delete-expense-${expense.id}`}
+        accessibilityLabel={`Manage ${expense.category}`}
+        testID={`daily-expense-actions-${expense.id}`}
         hitSlop={10}
-        onPress={() =>
-          Alert.alert('Remove expense?', 'This entry will be removed from your totals.', [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Remove', style: 'destructive', onPress: () => onRemove(expense.id) },
-          ])
-        }
+        onPress={() => showExpenseActions(expense, { onEdit: () => onEdit(expense), onRemove: () => onRemove(expense.id) })}
       >
         <Feather name="more-horizontal" size={19} color={colors.mutedForeground} />
       </Pressable>
@@ -85,6 +71,7 @@ export default function DailyScreen() {
   const [visibleMonth, setVisibleMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
   const [selectedDay, setSelectedDay] = useState(new Date(today.getFullYear(), today.getMonth(), today.getDate()));
   const [isAddVisible, setIsAddVisible] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
   const monthShare = useMemo(
     () =>
@@ -167,6 +154,7 @@ export default function DailyScreen() {
           accessibilityLabel="Add daily expense"
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+            setEditingExpense(null);
             setIsAddVisible(true);
           }}
           style={({ pressed }) => [
@@ -202,9 +190,16 @@ export default function DailyScreen() {
                 const total = convertedTotals[key] ?? 0;
                 const isSelected = dateKey(selectedDay) === key;
                 const isToday = dateKey(today) === key;
-                const fillOpacity = getFillOpacity(total, maximum);
-                const strongFill = fillOpacity > 0.42;
-                const fillBorderOpacity = total ? Math.min(fillOpacity + 0.22, 0.88) : 0;
+                const cellColors = getHeatmapCellColors(total, maximum, colors.primary, {
+                  isSelected,
+                  isHighlighted: isToday,
+                  selectedBorderColor: colors.foreground,
+                  emptyBorderColor: colors.border,
+                  highlightColor: colors.primary,
+                  secondaryColor: colors.secondary,
+                  foregroundColor: colors.foreground,
+                  primaryForeground: colors.primaryForeground,
+                });
                 return (
                   <Pressable
                     key={key}
@@ -217,30 +212,20 @@ export default function DailyScreen() {
                   >
                     <View
                       style={[
-                        styles.dayFill,
+                        styles.heatmapFill,
                         {
-                          backgroundColor: total
-                            ? `${colors.primary}${toHexAlpha(fillOpacity)}`
-                            : isSelected
-                              ? colors.secondary
-                              : 'transparent',
-                          borderColor: isSelected
-                            ? colors.foreground
-                            : isToday
-                              ? colors.primary
-                              : total
-                                ? `${colors.primary}${toHexAlpha(fillBorderOpacity)}`
-                                : colors.border,
-                          borderWidth: isSelected ? 2 : 1,
+                          backgroundColor: cellColors.backgroundColor,
+                          borderColor: cellColors.borderColor,
+                          borderWidth: cellColors.borderWidth,
                         },
                       ]}
                     >
                       <Text
                         style={[
-                          styles.dayNumber,
+                          styles.cellLabel,
                           {
-                            color: strongFill ? colors.primaryForeground : colors.foreground,
-                            fontWeight: isToday || isSelected ? '700' : '500',
+                            color: cellColors.labelColor,
+                            fontWeight: isToday || isSelected ? '700' : '600',
                           },
                         ]}
                       >
@@ -249,8 +234,8 @@ export default function DailyScreen() {
                       {total > 0 && (
                         <Text
                           style={[
-                            styles.dayAmount,
-                            { color: strongFill ? colors.primaryForeground : colors.primary },
+                            styles.cellAmount,
+                            { color: cellColors.amountColor },
                           ]}
                           numberOfLines={1}
                           adjustsFontSizeToFit
@@ -268,7 +253,7 @@ export default function DailyScreen() {
         </View>
         <View style={styles.legend}>
           <Text style={[styles.legendLabel, { color: colors.mutedForeground }]}>LESS</Text>
-          {[0.28, 0.48, 0.65].map((opacity) => (
+          {LEGEND_OPACITIES.map((opacity) => (
             <View
               key={opacity}
               style={[
@@ -310,7 +295,9 @@ export default function DailyScreen() {
             </View>
           </View>
         )}
-        {selectedExpenses.length ? selectedExpenses.map((expense) => <ExpenseRow key={expense.id} expense={expense} onRemove={removeExpense} />) : !monthShare ? (
+        {selectedExpenses.length ? selectedExpenses.map((expense) => (
+          <ExpenseRow key={expense.id} expense={expense} onEdit={setEditingExpense} onRemove={removeExpense} />
+        )) : !monthShare ? (
           <View style={styles.empty}>
             <View style={[styles.emptyIcon, { backgroundColor: colors.secondary }]}>
               <Feather name="sun" size={20} color={colors.mutedForeground} />
@@ -321,7 +308,16 @@ export default function DailyScreen() {
         ) : null}
       </View>
     </ScrollView>
-    <QuickAddSheet visible={isAddVisible} initialType="daily" initialDate={selectedDay} onClose={() => setIsAddVisible(false)} />
+    <QuickAddSheet
+      visible={isAddVisible || !!editingExpense}
+      initialType="daily"
+      initialDate={editingExpense ? new Date(editingExpense.date) : selectedDay}
+      expense={editingExpense ?? undefined}
+      onClose={() => {
+        setIsAddVisible(false);
+        setEditingExpense(null);
+      }}
+    />
     </View>
   );
 }
@@ -345,7 +341,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 56,
   },
-  dayFill: {
+  heatmapFill: {
     flex: 1,
     minHeight: 56,
     borderRadius: 11,
@@ -355,8 +351,8 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
   },
   emptyDayCell: { flex: 1, minHeight: 56 },
-  dayNumber: { fontSize: 12, lineHeight: 15 },
-  dayAmount: { fontSize: 8, fontWeight: '700', marginTop: 3, textAlign: 'center' },
+  cellLabel: { fontSize: 13, lineHeight: 16, fontWeight: '600' },
+  cellAmount: { fontSize: 9, fontWeight: '700', marginTop: 3, textAlign: 'center' },
   legend: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginTop: 16 },
   legendLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 0.8, marginHorizontal: 2 },
   legendSwatch: { width: 14, height: 14, borderRadius: 5, borderWidth: 1 },

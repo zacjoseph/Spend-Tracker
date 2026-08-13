@@ -1,7 +1,15 @@
 import { z } from 'zod';
 import type { CurrencyCode, CurrencyOption, Expense } from '@/context/SpendingContext';
+import {
+  DEFAULT_DAILY_CATEGORIES,
+  DEFAULT_MONTHLY_CATEGORIES,
+  sanitizeCategoryList,
+} from '@/utils/categories';
+import { sanitizeTrips } from '@/utils/trips';
 
 export const BACKUP_VERSION = 1;
+export const BACKUP_APP_ID = 'multi-currency-spend';
+const LEGACY_BACKUP_APP_ID = 'spendly';
 
 const expenseSchema = z.object({
   id: z.string().min(1),
@@ -11,6 +19,13 @@ const expenseSchema = z.object({
   category: z.string(),
   note: z.string(),
   date: z.string(),
+  createdAt: z.string(),
+  tripId: z.string().nullable().optional(),
+});
+
+const tripSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
   createdAt: z.string(),
 });
 
@@ -27,6 +42,10 @@ export const backupDataSchema = z.object({
   entryCurrency: z.string().min(3).max(6),
   availableCurrencies: z.array(z.string().min(3).max(6)),
   customCurrencies: z.array(currencyOptionSchema).default([]),
+  dailyCategories: z.array(z.string()).optional(),
+  monthlyCategories: z.array(z.string()).optional(),
+  trips: z.array(tripSchema).optional(),
+  activeTripId: z.string().nullable().optional(),
   ratesToUsd: z.record(z.string(), z.coerce.number().finite().positive()),
   lastRateUpdated: z.string().nullable().default(null),
   spreadMonthlyIntoDaily: z.boolean().default(false),
@@ -35,7 +54,7 @@ export const backupDataSchema = z.object({
 export const backupSchema = z.object({
   version: z.literal(BACKUP_VERSION),
   exportedAt: z.string(),
-  app: z.literal('spendly'),
+  app: z.enum([BACKUP_APP_ID, LEGACY_BACKUP_APP_ID]),
   data: backupDataSchema,
 });
 
@@ -46,7 +65,7 @@ export function createBackup(data: SpendlyBackupData): SpendlyBackup {
   return {
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
-    app: 'spendly',
+    app: BACKUP_APP_ID,
     data,
   };
 }
@@ -59,7 +78,7 @@ function wrapBackupData(data: SpendlyBackupData, exportedAt?: string): SpendlyBa
   return {
     version: BACKUP_VERSION,
     exportedAt: exportedAt ?? new Date().toISOString(),
-    app: 'spendly',
+    app: BACKUP_APP_ID,
     data,
   };
 }
@@ -100,7 +119,7 @@ export function parseBackup(raw: string): { success: true; backup: SpendlyBackup
   if (trimmed.startsWith('<')) {
     return {
       success: false,
-      message: 'This looks like a web page, not a Spendly backup. Download the .json file first, then import it.',
+      message: 'This looks like a web page, not a Multi Currency Spend backup. Download the .json file first, then import it.',
     };
   }
 
@@ -117,7 +136,7 @@ export function parseBackup(raw: string): { success: true; backup: SpendlyBackup
   const backup = normalizeBackupJson(json);
   if (backup) return { success: true, backup };
 
-  return { success: false, message: 'This file is not a valid Spendly backup.' };
+  return { success: false, message: 'This file is not a valid Multi Currency Spend backup.' };
 }
 
 export function mergeExpenses(local: Expense[], imported: Expense[]): Expense[] {
@@ -162,16 +181,24 @@ export function normalizeBackupData(data: SpendlyBackupData, fallbackRates: Reco
   const entryCurrency = knownCodes.has(data.entryCurrency.toUpperCase())
     ? data.entryCurrency.toUpperCase()
     : mainCurrency;
+  const trips = sanitizeTrips(data.trips);
+  const tripIds = new Set(trips.map((trip) => trip.id));
+  const activeTripId = data.activeTripId && tripIds.has(data.activeTripId) ? data.activeTripId : null;
 
   return {
     expenses: data.expenses.map((expense) => ({
       ...expense,
       currency: expense.currency.toUpperCase() as CurrencyCode,
+      tripId: expense.tripId && tripIds.has(expense.tripId) ? expense.tripId : null,
     })),
     mainCurrency: mainCurrency as CurrencyCode,
     entryCurrency: entryCurrency as CurrencyCode,
     availableCurrencies: availableCurrencies as CurrencyCode[],
     customCurrencies: customCurrencies as CurrencyOption[],
+    dailyCategories: sanitizeCategoryList(data.dailyCategories, DEFAULT_DAILY_CATEGORIES),
+    monthlyCategories: sanitizeCategoryList(data.monthlyCategories, DEFAULT_MONTHLY_CATEGORIES),
+    trips,
+    activeTripId,
     ratesToUsd: { ...fallbackRates, ...data.ratesToUsd },
     lastRateUpdated: data.lastRateUpdated,
     spreadMonthlyIntoDaily: data.spreadMonthlyIntoDaily ?? false,

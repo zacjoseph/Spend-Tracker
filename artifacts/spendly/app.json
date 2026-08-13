@@ -1,11 +1,12 @@
 {
   "expo": {
-    "name": "Spendly",
-    "slug": "spendly",
+    "name": "Multi Currency Spend",
+    "slug": "multi-currency-spend",
     "version": "1.0.0",
+    "description": "A multi-currency expense tracker for everyday purchases and recurring monthly bills.",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "spendly",
+    "scheme": "multicurrencyspend",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -14,19 +15,22 @@
       "backgroundColor": "#f7f8f5"
     },
     "ios": {
-      "supportsTablet": false
+      "supportsTablet": false,
+      "bundleIdentifier": "com.zacjoseph.multicurrencyspend"
     },
-    "android": {},
+    "android": {
+      "package": "com.zacjoseph.multicurrencyspend",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#f7f8f5"
+      }
+    },
     "web": {
-      "favicon": "./assets/images/icon.png"
+      "favicon": "./assets/images/icon.png",
+      "bundler": "metro"
     },
     "plugins": [
-      [
-        "expo-router",
-        {
-          "origin": "https://replit.com/"
-        }
-      ],
+      "expo-router",
       "expo-font",
       "expo-web-browser",
       "@react-native-community/datetimepicker"
@@ -34,6 +38,9 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "privacyPolicyUrl": "https://github.com/zacjoseph/Spend-Tracker/blob/main/artifacts/spendly/docs/privacy-policy.md"
     }
   }
 }

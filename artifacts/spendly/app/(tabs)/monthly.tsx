@@ -1,11 +1,14 @@
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import React, { useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { QuickAddSheet } from '@/components/QuickAddSheet';
 import { Expense, useSpending } from '@/context/SpendingContext';
 import { useColors } from '@/hooks/useColors';
+import { showExpenseActions } from '@/utils/expenseActions';
+import { getCategoryIcon } from '@/utils/categories';
+import { getHeatmapCellColors, LEGEND_OPACITIES, toHexAlpha } from '@/utils/calendarHeatmap';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -14,15 +17,10 @@ function monthKey(dateString: string) {
   return `${date.getFullYear()}-${date.getMonth()}`;
 }
 
-function getIntensity(amount: number, maximum: number) {
-  if (!amount || !maximum) return 0;
-  return Math.max(0.18, Math.min(1, amount / maximum));
-}
-
-function BillRow({ expense, onRemove }: { expense: Expense; onRemove: (id: string) => void }) {
+function BillRow({ expense, onEdit, onRemove }: { expense: Expense; onEdit: (expense: Expense) => void; onRemove: (id: string) => void }) {
   const colors = useColors();
   const { formatAmount, convertAmount, mainCurrency } = useSpending();
-  const icon = expense.category === 'Rent' ? 'home' : expense.category === 'Electricity' ? 'zap' : expense.category === 'Internet' ? 'wifi' : expense.category === 'Phone' ? 'smartphone' : 'more-horizontal';
+  const icon = getCategoryIcon(expense.category, 'monthly');
 
   return (
     <View style={[styles.billRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -42,18 +40,13 @@ function BillRow({ expense, onRemove }: { expense: Expense; onRemove: (id: strin
         )}
       </View>
       <Pressable
-        testID={`monthly-delete-expense-${expense.id}`}
-        accessibilityLabel={`Delete ${expense.category}`}
+        testID={`monthly-expense-actions-${expense.id}`}
+        accessibilityLabel={`Manage ${expense.category}`}
         hitSlop={10}
-        onPress={() =>
-          Alert.alert('Remove monthly expense?', 'This entry will be removed from your spending totals.', [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Remove', style: 'destructive', onPress: () => onRemove(expense.id) },
-          ])
-        }
+        onPress={() => showExpenseActions(expense, { onEdit: () => onEdit(expense), onRemove: () => onRemove(expense.id) })}
         style={({ pressed }) => [styles.deleteButton, { opacity: pressed ? 0.45 : 0.75 }]}
       >
-        <Feather name="trash-2" size={17} color={colors.mutedForeground} />
+        <Feather name="more-horizontal" size={17} color={colors.mutedForeground} />
       </Pressable>
     </View>
   );
@@ -64,9 +57,11 @@ export default function MonthlyScreen() {
   const insets = useSafeAreaInsets();
   const { expenses, mainCurrency, formatAmount, convertAmount, removeExpense } = useSpending();
   const currentYear = new Date().getFullYear();
+  const currentMonth = new Date().getMonth();
   const [year, setYear] = useState(currentYear);
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [isAddVisible, setIsAddVisible] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
   const totals = useMemo(() => {
     const byMonth: Record<string, number> = {};
@@ -81,6 +76,13 @@ export default function MonthlyScreen() {
   const maximum = Math.max(0, ...yearTotals);
   const selectedTotal = yearTotals[selectedMonth] ?? 0;
   const selectedLabel = new Date(year, selectedMonth, 1).toLocaleDateString([], { month: 'long', year: 'numeric' });
+  const monthRows = useMemo(() => {
+    const rows: number[][] = [];
+    for (let index = 0; index < MONTHS.length; index += 3) {
+      rows.push([index, index + 1, index + 2]);
+    }
+    return rows;
+  }, []);
   const addExpenseDate = (() => {
     const now = new Date();
     if (year === now.getFullYear() && selectedMonth === now.getMonth()) {
@@ -88,6 +90,9 @@ export default function MonthlyScreen() {
     }
     return new Date(year, selectedMonth, 1);
   })();
+  const monthlyBillCount = expenses.filter(
+    (expense) => expense.type === 'monthly' && monthKey(expense.date) === `${year}-${selectedMonth}`,
+  ).length;
 
   const moveYear = (offset: number) => {
     setYear((current) => current + offset);
@@ -112,25 +117,21 @@ export default function MonthlyScreen() {
           accessibilityLabel="Add monthly bill"
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+            setEditingExpense(null);
             setIsAddVisible(true);
           }}
           style={({ pressed }) => [
             styles.headerAddButton,
-            { backgroundColor: colors.accent, opacity: pressed ? 0.82 : 1 },
+            { backgroundColor: colors.primary, opacity: pressed ? 0.82 : 1 },
           ]}
         >
-          <Feather name="plus" size={22} color={colors.accentForeground} />
+          <Feather name="plus" size={22} color={colors.primaryForeground} />
         </Pressable>
       </View>
 
       <View style={[styles.summaryCard, { backgroundColor: colors.navy }]}>
-        <View>
-          <Text style={[styles.summaryLabel, { color: colors.navyMuted }]}>TOTAL IN {year}</Text>
-          <Text style={[styles.summaryAmount, { color: '#ffffff' }]}>{formatAmount(yearTotals.reduce((sum, amount) => sum + amount, 0), mainCurrency)}</Text>
-        </View>
-        <View style={[styles.summaryIcon, { backgroundColor: colors.navyMuted + '4d' }]}>
-          <Feather name="trending-up" size={20} color={colors.accent} />
-        </View>
+        <Text style={[styles.summaryLabel, { color: colors.accentForeground }]}>TOTAL IN {year}</Text>
+        <Text style={[styles.summaryAmount, { color: '#ffffff' }]}>{formatAmount(yearTotals.reduce((sum, amount) => sum + amount, 0), mainCurrency)}</Text>
       </View>
 
       <View style={[styles.calendarCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -138,69 +139,128 @@ export default function MonthlyScreen() {
           <Pressable testID="monthly-previous-year" accessibilityLabel="Previous year" onPress={() => moveYear(-1)} hitSlop={10} style={styles.arrowButton}>
             <Feather name="chevron-left" size={20} color={colors.foreground} />
           </Pressable>
-          <Text style={[styles.yearLabel, { color: colors.foreground }]}>{year}</Text>
+          <Text style={[styles.periodLabel, { color: colors.foreground }]}>{year}</Text>
           <Pressable testID="monthly-next-year" accessibilityLabel="Next year" onPress={() => moveYear(1)} hitSlop={10} style={styles.arrowButton}>
             <Feather name="chevron-right" size={20} color={colors.foreground} />
           </Pressable>
         </View>
-        <View style={styles.monthGrid}>
-          {MONTHS.map((month, index) => {
-            const total = yearTotals[index];
-            const intensity = getIntensity(total, maximum);
-            const isSelected = selectedMonth === index;
-            return (
-              <Pressable
-                key={month}
-                testID={`monthly-month-${index + 1}`}
-                onPress={() => {
-                  setSelectedMonth(index);
-                  Haptics.selectionAsync().catch(() => undefined);
-                }}
-                style={({ pressed }) => [
-                  styles.monthCell,
-                  {
-                    backgroundColor: total ? `${colors.primary}${Math.round(28 + intensity * 190).toString(16).padStart(2, '0')}` : colors.secondary,
-                    borderColor: isSelected ? colors.foreground : 'transparent',
-                    opacity: pressed ? 0.7 : 1,
-                  },
-                ]}
-              >
-                <Text style={[styles.monthName, { color: total && intensity > 0.58 ? colors.primaryForeground : colors.foreground }]}>{month}</Text>
-                <Text style={[styles.monthAmount, { color: intensity > 0.58 ? colors.primaryForeground : total ? colors.primary : colors.mutedForeground }]}>{total ? formatAmount(total, mainCurrency) : '—'}</Text>
-              </Pressable>
-            );
-          })}
+        <View style={styles.calendarGrid}>
+          {monthRows.map((row, rowIndex) => (
+            <View key={`month-row-${rowIndex}`} style={styles.calendarRow}>
+              {row.map((index) => {
+                const month = MONTHS[index];
+                const total = yearTotals[index];
+                const isSelected = selectedMonth === index;
+                const isCurrentMonth = year === currentYear && index === currentMonth;
+                const cellColors = getHeatmapCellColors(total, maximum, colors.primary, {
+                  isSelected,
+                  isHighlighted: isCurrentMonth,
+                  selectedBorderColor: colors.foreground,
+                  emptyBorderColor: colors.border,
+                  highlightColor: colors.primary,
+                  secondaryColor: colors.secondary,
+                  foregroundColor: colors.foreground,
+                  primaryForeground: colors.primaryForeground,
+                });
+                return (
+                  <Pressable
+                    key={month}
+                    testID={`monthly-month-${index + 1}`}
+                    onPress={() => {
+                      setSelectedMonth(index);
+                      Haptics.selectionAsync().catch(() => undefined);
+                    }}
+                    style={({ pressed }) => [styles.monthCell, { opacity: pressed ? 0.7 : 1 }]}
+                  >
+                    <View
+                      style={[
+                        styles.heatmapFill,
+                        {
+                          backgroundColor: cellColors.backgroundColor,
+                          borderColor: cellColors.borderColor,
+                          borderWidth: cellColors.borderWidth,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.cellLabel,
+                          {
+                            color: cellColors.labelColor,
+                            fontWeight: isCurrentMonth || isSelected ? '700' : '600',
+                          },
+                        ]}
+                      >
+                        {month}
+                      </Text>
+                      {total > 0 ? (
+                        <Text
+                          style={[styles.cellAmount, { color: cellColors.amountColor }]}
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                          minimumFontScale={0.75}
+                        >
+                          {formatAmount(total, mainCurrency)}
+                        </Text>
+                      ) : (
+                        <Text style={[styles.cellEmpty, { color: colors.mutedForeground }]}>—</Text>
+                      )}
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ))}
         </View>
         <View style={styles.legend}>
           <Text style={[styles.legendLabel, { color: colors.mutedForeground }]}>LESS</Text>
-          <View style={[styles.legendSwatch, { backgroundColor: `${colors.primary}30` }]} />
-          <View style={[styles.legendSwatch, { backgroundColor: `${colors.primary}8c` }]} />
-          <View style={[styles.legendSwatch, { backgroundColor: `${colors.primary}e8` }]} />
+          {LEGEND_OPACITIES.map((opacity) => (
+            <View
+              key={opacity}
+              style={[
+                styles.legendSwatch,
+                {
+                  backgroundColor: `${colors.primary}${toHexAlpha(opacity)}`,
+                  borderColor: `${colors.primary}${toHexAlpha(Math.min(opacity + 0.22, 0.88))}`,
+                },
+              ]}
+            />
+          ))}
           <Text style={[styles.legendLabel, { color: colors.mutedForeground }]}>MORE</Text>
         </View>
       </View>
 
-      <View style={[styles.detailCard, { backgroundColor: colors.accent }]}>
-        <View style={styles.detailCopy}>
-          <Text style={[styles.detailLabel, { color: colors.accentForeground + 'b3' }]}>SELECTED MONTH</Text>
-          <Text style={[styles.detailTitle, { color: colors.accentForeground }]}>{selectedLabel}</Text>
+      <View style={styles.selectedHeader}>
+        <View>
+          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>{selectedLabel}</Text>
+          <Text style={[styles.sectionHint, { color: colors.mutedForeground }]}>
+            {monthlyBillCount ? `${monthlyBillCount} ${monthlyBillCount === 1 ? 'bill' : 'bills'}` : 'No bills logged'}
+          </Text>
         </View>
-        <Text style={[styles.detailAmount, { color: colors.accentForeground }]}>{formatAmount(selectedTotal, mainCurrency)}</Text>
+        <Text style={[styles.selectedTotal, { color: colors.primary }]}>{formatAmount(selectedTotal, mainCurrency)}</Text>
       </View>
-      <Text style={[styles.note, { color: colors.mutedForeground }]}>Select a month to compare spending intensity across the year.</Text>
-      {year === currentYear && (
+
+      {year === currentYear && monthlyBillCount > 0 && (
         <>
           <View style={styles.billsHeader}>
             <Text style={[styles.billsTitle, { color: colors.foreground }]}>Bills in {selectedLabel}</Text>
-            <Text style={[styles.sectionHint, { color: colors.mutedForeground }]}>{expenses.filter((expense) => expense.type === 'monthly' && monthKey(expense.date) === `${year}-${selectedMonth}`).length} entries</Text>
           </View>
           {expenses.filter((expense) => expense.type === 'monthly' && monthKey(expense.date) === `${year}-${selectedMonth}`).map((expense) => (
-            <BillRow key={expense.id} expense={expense} onRemove={removeExpense} />
+            <BillRow key={expense.id} expense={expense} onEdit={setEditingExpense} onRemove={removeExpense} />
           ))}
         </>
       )}
     </ScrollView>
-    <QuickAddSheet visible={isAddVisible} initialType="monthly" initialDate={addExpenseDate} onClose={() => setIsAddVisible(false)} />
+    <QuickAddSheet
+      visible={isAddVisible || !!editingExpense}
+      initialType="monthly"
+      initialDate={editingExpense ? new Date(editingExpense.date) : addExpenseDate}
+      expense={editingExpense ?? undefined}
+      onClose={() => {
+        setIsAddVisible(false);
+        setEditingExpense(null);
+      }}
+    />
     </View>
   );
 }
@@ -212,29 +272,36 @@ const styles = StyleSheet.create({
   eyebrow: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, marginBottom: 6 },
   title: { fontSize: 29, fontWeight: '700', letterSpacing: -0.8 },
   headerAddButton: { width: 43, height: 43, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
-  summaryCard: { borderRadius: 21, padding: 20, minHeight: 130, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
-  summaryLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.4, marginBottom: 8 },
-  summaryAmount: { fontSize: 34, fontWeight: '700', letterSpacing: -1 },
-  summaryIcon: { width: 45, height: 45, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
-  calendarCard: { borderRadius: 19, borderWidth: 1, padding: 14 },
-  calendarHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  summaryCard: { borderRadius: 22, padding: 20, marginBottom: 12, gap: 8 },
+  summaryLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 1.4 },
+  summaryAmount: { fontSize: 40, fontWeight: '700', letterSpacing: -1.1 },
+  calendarCard: { borderRadius: 19, borderWidth: 1, padding: 16 },
+  calendarHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 },
   arrowButton: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center' },
-  yearLabel: { fontSize: 16, fontWeight: '700' },
-  monthGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  monthCell: { width: '31.5%', minHeight: 76, borderRadius: 13, borderWidth: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
-  monthName: { fontSize: 12, fontWeight: '700', marginBottom: 6 },
-  monthAmount: { fontSize: 10, fontWeight: '600' },
-  legend: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 5, marginTop: 15 },
+  periodLabel: { fontSize: 16, fontWeight: '700' },
+  calendarGrid: { gap: 8 },
+  calendarRow: { flexDirection: 'row', gap: 6 },
+  monthCell: { flex: 1, minHeight: 56 },
+  heatmapFill: {
+    flex: 1,
+    minHeight: 56,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    paddingVertical: 5,
+  },
+  cellLabel: { fontSize: 13, lineHeight: 16, fontWeight: '600' },
+  cellAmount: { fontSize: 9, fontWeight: '700', marginTop: 3, textAlign: 'center' },
+  cellEmpty: { fontSize: 10, fontWeight: '600', marginTop: 3 },
+  legend: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginTop: 16 },
   legendLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 0.8, marginHorizontal: 2 },
-  legendSwatch: { width: 13, height: 13, borderRadius: 4 },
-  detailCard: { minHeight: 75, borderRadius: 17, padding: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 22 },
-  detailCopy: { flex: 1 },
-  detailLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.2, marginBottom: 6 },
-  detailTitle: { fontSize: 15, fontWeight: '700' },
-  detailAmount: { fontSize: 18, fontWeight: '700' },
-  note: { fontSize: 11, lineHeight: 17, marginTop: 10 },
+  legendSwatch: { width: 14, height: 14, borderRadius: 5, borderWidth: 1 },
+  selectedHeader: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 28, marginBottom: 11 },
+  sectionTitle: { fontSize: 17, fontWeight: '700', marginBottom: 4 },
   sectionHint: { fontSize: 11, fontWeight: '500' },
-  billsHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginTop: 25, marginBottom: 10 },
+  selectedTotal: { fontSize: 16, fontWeight: '700' },
+  billsHeader: { marginTop: 18, marginBottom: 10 },
   billsTitle: { fontSize: 17, fontWeight: '700' },
   billRow: { minHeight: 72, borderRadius: 16, borderWidth: 1, padding: 13, flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 9 },
   billIcon: { width: 41, height: 41, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },

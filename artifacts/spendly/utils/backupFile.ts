@@ -4,23 +4,32 @@ import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 import type { SpendlyBackup } from '@/utils/backup';
 
+type ExportFileOptions = {
+  filename: string;
+  contents: string;
+  mimeType: string;
+  dialogTitle: string;
+  uti?: string;
+};
+
 function backupFilename(exportedAt: string) {
   const date = new Date(exportedAt);
   const stamp = Number.isNaN(date.getTime())
     ? 'unknown-date'
     : date.toISOString().slice(0, 10);
-  return `spendly-backup-${stamp}.json`;
+  return `multi-currency-spend-backup-${stamp}.json`;
 }
 
-export async function exportBackupFile(backup: SpendlyBackup): Promise<{ success: true } | { success: false; message: string }> {
-  const contents = JSON.stringify(backup, null, 2);
-  const filename = backupFilename(backup.exportedAt);
+export async function exportTextFile(
+  options: ExportFileOptions,
+): Promise<{ success: true } | { success: false; message: string }> {
+  const { filename, contents, mimeType, dialogTitle, uti } = options;
 
   if (Platform.OS === 'web') {
     if (typeof document === 'undefined') {
       return { success: false, message: 'Download is not available in this browser.' };
     }
-    const blob = new Blob([contents], { type: 'application/json' });
+    const blob = new Blob([contents], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -31,7 +40,7 @@ export async function exportBackupFile(backup: SpendlyBackup): Promise<{ success
   }
 
   if (!cacheDirectory) {
-    return { success: false, message: 'Could not access a folder to save the backup.' };
+    return { success: false, message: 'Could not access a folder to save the file.' };
   }
 
   const uri = `${cacheDirectory}${filename}`;
@@ -40,14 +49,35 @@ export async function exportBackupFile(backup: SpendlyBackup): Promise<{ success
   const canShare = await Sharing.isAvailableAsync();
   if (canShare) {
     await Sharing.shareAsync(uri, {
-      mimeType: 'application/json',
-      dialogTitle: 'Export Spendly backup',
-      UTI: 'public.json',
+      mimeType,
+      dialogTitle,
+      UTI: uti,
     });
     return { success: true };
   }
 
   return { success: false, message: 'Sharing is not available on this device.' };
+}
+
+export async function exportBackupFile(backup: SpendlyBackup): Promise<{ success: true } | { success: false; message: string }> {
+  return exportTextFile({
+    filename: backupFilename(backup.exportedAt),
+    contents: JSON.stringify(backup, null, 2),
+    mimeType: 'application/json',
+    dialogTitle: 'Export Multi Currency Spend backup',
+    uti: 'public.json',
+  });
+}
+
+export async function exportCsvFile(contents: string): Promise<{ success: true } | { success: false; message: string }> {
+  const stamp = new Date().toISOString().slice(0, 10);
+  return exportTextFile({
+    filename: `multi-currency-spend-expenses-${stamp}.csv`,
+    contents,
+    mimeType: 'text/csv',
+    dialogTitle: 'Export Multi Currency Spend expenses',
+    uti: 'public.comma-separated-values-text',
+  });
 }
 
 async function readUriAsText(uri: string): Promise<string | null> {

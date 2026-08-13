@@ -1,74 +1,42 @@
 import { Feather } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import * as Haptics from 'expo-haptics';
+import * as WebBrowser from 'expo-web-browser';
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { CurrencyCode, useSpending } from '@/context/SpendingContext';
+import { useSpending } from '@/context/SpendingContext';
 import { useColors } from '@/hooks/useColors';
 import { summarizeBackup, parseBackup, type SpendlyBackup } from '@/utils/backup';
-import { exportBackupFile, pickBackupFile } from '@/utils/backupFile';
+import { exportBackupFile, exportCsvFile, pickBackupFile } from '@/utils/backupFile';
+import { buildExpensesCsv } from '@/utils/expenseCsv';
+import { CurrencySettings } from '@/components/CurrencySettings';
+import { CategorySettings } from '@/components/CategorySettings';
 
-function formatUpdated(value: string | null) {
-  if (!value) return 'Using saved reference rates';
-  return `Updated ${new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
-}
+const privacyPolicyUrl =
+  typeof Constants.expoConfig?.extra?.privacyPolicyUrl === 'string'
+    ? Constants.expoConfig.extra.privacyPolicyUrl
+    : undefined;
 
 export default function SettingsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const {
     mainCurrency,
-    availableCurrencies,
-    currencyOptions,
-    ratesToUsd,
-    setMainCurrency,
-    addCustomCurrency,
-    removeCurrency,
-    lastRateUpdated,
-    rateStatus,
-    refreshRates,
     createBackup,
     importBackup,
     clearAllExpenses,
     expenses,
+    convertAmount,
+    getTripById,
     spreadMonthlyIntoDaily,
     setSpreadMonthlyIntoDaily,
+    restoreDefaults,
   } = useSpending();
-  const [customCode, setCustomCode] = useState('');
-  const [customName, setCustomName] = useState('');
-  const [customError, setCustomError] = useState('');
-  const [isAddingCurrency, setIsAddingCurrency] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [backupMessage, setBackupMessage] = useState('');
-
-  const chooseMainCurrency = (currency: CurrencyCode) => {
-    Haptics.selectionAsync().catch(() => undefined);
-    setMainCurrency(currency);
-  };
-
-  const currencyName = (code: CurrencyCode) => currencyOptions.find((item) => item.code === code)?.name ?? code;
-  const currencySymbol = (code: CurrencyCode) => currencyOptions.find((item) => item.code === code)?.symbol ?? code;
-  const formatRate = (value: number) => {
-    if (!Number.isFinite(value)) return '—';
-    return value.toLocaleString('en-US', { maximumFractionDigits: value < 0.01 ? 6 : value < 1 ? 4 : 2 });
-  };
-
-  const saveCustomCurrency = async () => {
-    if (isAddingCurrency) return;
-    setIsAddingCurrency(true);
-    setCustomError('');
-    const result = await addCustomCurrency({ code: customCode, name: customName });
-    setIsAddingCurrency(false);
-    if (!result.success) {
-      setCustomError(result.message ?? 'Could not add this currency.');
-      return;
-    }
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-    setCustomCode('');
-    setCustomName('');
-    setCustomError('');
-  };
 
   const exportData = async () => {
     if (isExporting) return;
@@ -79,6 +47,21 @@ export default function SettingsScreen() {
     if (result.success) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
       setBackupMessage(`Exported ${expenses.length} expenses as JSON.`);
+      return;
+    }
+    setBackupMessage(result.message);
+  };
+
+  const exportCsvData = async () => {
+    if (isExportingCsv || !expenses.length) return;
+    setIsExportingCsv(true);
+    setBackupMessage('');
+    const csv = buildExpensesCsv(expenses, mainCurrency, convertAmount, (tripId) => getTripById(tripId)?.name);
+    const result = await exportCsvFile(csv);
+    setIsExportingCsv(false);
+    if (result.success) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      setBackupMessage(`Exported ${expenses.length} expenses as CSV.`);
       return;
     }
     setBackupMessage(result.message);
@@ -167,6 +150,31 @@ export default function SettingsScreen() {
     );
   };
 
+  const confirmRestoreDefaults = () => {
+    Alert.alert(
+      'Restore defaults?',
+      'This resets categories, currencies, main currency (USD), and the daily-view spread setting. Your expenses and trips are not affected.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Restore',
+          style: 'destructive',
+          onPress: () => {
+            restoreDefaults();
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+            setBackupMessage('Defaults restored.');
+          },
+        },
+      ],
+    );
+  };
+
+  const openPrivacyPolicy = async () => {
+    if (!privacyPolicyUrl) return;
+    Haptics.selectionAsync().catch(() => undefined);
+    await WebBrowser.openBrowserAsync(privacyPolicyUrl);
+  };
+
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: colors.background }]}
@@ -183,193 +191,87 @@ export default function SettingsScreen() {
         </View>
       </View>
 
-      <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Main currency</Text>
-      <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>
-        Your totals are converted into this currency.
-      </Text>
-      <View style={[styles.currencyCard, { backgroundColor: colors.navy }]}>
-        <View style={[styles.mainSymbol, { backgroundColor: colors.navyMuted + '4d' }]}>
-          <Text style={[styles.mainSymbolText, { color: colors.accent }]}>{currencySymbol(mainCurrency)}</Text>
-        </View>
-        <View style={styles.mainCopy}>
-          <Text style={[styles.mainCode, { color: '#ffffff' }]}>{mainCurrency}</Text>
-          <Text style={[styles.mainName, { color: colors.navyMuted }]}>{currencyName(mainCurrency)}</Text>
-        </View>
-        <Feather name="check-circle" size={22} color={colors.accent} />
+      <View style={styles.sectionBlock}>
+        <CurrencySettings onMessage={setBackupMessage} />
       </View>
 
-      <View style={styles.mainOptions}>
-        {availableCurrencies.map((currency) => (
-          <Pressable
-            key={currency}
-            testID={`main-currency-${currency}`}
-            onPress={() => chooseMainCurrency(currency)}
-            style={({ pressed }) => [
-              styles.mainOption,
-              { backgroundColor: mainCurrency === currency ? colors.accent : colors.card, borderColor: mainCurrency === currency ? colors.success : colors.border, opacity: pressed ? 0.7 : 1 },
-            ]}
-          >
-            <Text style={[styles.optionCode, { color: mainCurrency === currency ? colors.accentForeground : colors.foreground }]}>{currency}</Text>
-            <Text style={[styles.optionName, { color: mainCurrency === currency ? colors.accentForeground : colors.mutedForeground }]}>{currencyName(currency)}</Text>
-            {mainCurrency === currency && <Feather name="check" size={16} color={colors.accentForeground} />}
-          </Pressable>
-        ))}
+      <View style={styles.sectionBlock}>
+        <CategorySettings onMessage={setBackupMessage} />
       </View>
 
-      <View style={styles.availableHeader}>
-        <View>
-          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Available currencies</Text>
-          <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>Use these when logging an expense.</Text>
-        </View>
-        <Text style={[styles.count, { color: colors.primary }]}>{availableCurrencies.length}</Text>
-      </View>
-
-      <View style={[styles.availableCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        {availableCurrencies.map((currency, index) => (
-          <View key={currency} style={[styles.availableRow, index < availableCurrencies.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
-            <View style={[styles.currencyBadge, { backgroundColor: colors.secondary }]}>
-              <Text style={[styles.currencyBadgeText, { color: colors.foreground }]}>{currency}</Text>
-            </View>
-            <View style={styles.availableCopy}>
-              <Text style={[styles.availableName, { color: colors.foreground }]}>{currencyName(currency)}</Text>
-              <Text style={[styles.availableSymbol, { color: colors.mutedForeground }]}>{currencySymbol(currency)}</Text>
-            </View>
-            {currency === mainCurrency ? (
-              <Text style={[styles.mainLabel, { color: colors.success }]}>MAIN</Text>
-            ) : (
-              <Pressable testID={`remove-currency-${currency}`} accessibilityLabel={`Remove ${currency}`} onPress={() => removeCurrency(currency)} hitSlop={10}>
-                <Feather name="x-circle" size={19} color={colors.mutedForeground} />
-              </Pressable>
-            )}
-          </View>
-        ))}
-      </View>
-
-      <View style={styles.ratesHeader}>
-        <View>
-          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Exchange rates</Text>
-          <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>Compared with your main currency.</Text>
-        </View>
-        <Text style={[styles.ratesUpdated, { color: colors.mutedForeground }]}>{rateStatus === 'refreshing' ? 'Updating…' : formatUpdated(lastRateUpdated)}</Text>
-      </View>
-      <View style={[styles.rateList, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        {availableCurrencies.map((currency, index) => {
-          const mainRateToUsd = ratesToUsd[mainCurrency] ?? 1;
-          const currencyRateToUsd = ratesToUsd[currency] ?? 1;
-          const mainToCurrency = mainRateToUsd / currencyRateToUsd;
-          return (
-            <View key={`rate-${currency}`} style={[styles.rateRow, index < availableCurrencies.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
-              <View style={[styles.rateBadge, { backgroundColor: colors.secondary }]}>
-                <Text style={[styles.rateBadgeText, { color: colors.foreground }]}>{currency}</Text>
-              </View>
-              <View style={styles.rateCopy}>
-                <Text style={[styles.rateTitle, { color: colors.foreground }]}>1 {mainCurrency} = {formatRate(mainToCurrency)} {currency}</Text>
-                <Text style={[styles.rateMeta, { color: colors.mutedForeground }]}>{currencyName(currency)}</Text>
-              </View>
-            </View>
-          );
-        })}
-      </View>
-
-      <Text style={[styles.addLabel, { color: colors.mutedForeground }]}>ADD A CUSTOM CURRENCY</Text>
-      <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>
-        Enter an ISO currency code and Spendly will fetch its live rate and symbol automatically.
-      </Text>
-      <View style={[styles.customCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.inputLabel, { color: colors.mutedForeground }]}>CODE</Text>
-        <TextInput
-          testID="custom-currency-code"
-          value={customCode}
-          onChangeText={(value) => {
-            setCustomCode(value.replace(/[^a-z]/gi, '').toUpperCase());
-            setCustomError('');
-          }}
-          placeholder="JPY"
-          placeholderTextColor={colors.mutedForeground}
-          autoCapitalize="characters"
-          maxLength={3}
-          style={[styles.customInput, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border }]}
-        />
-        <Text style={[styles.inputLabel, { color: colors.mutedForeground }]}>NAME</Text>
-        <TextInput
-          testID="custom-currency-name"
-          value={customName}
-          onChangeText={setCustomName}
-          placeholder="Japanese Yen"
-          placeholderTextColor={colors.mutedForeground}
-          style={[styles.customInput, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border }]}
-        />
-        <Text style={[styles.lookupHint, { color: colors.mutedForeground }]}>
-          Live rate and symbol are fetched when you add it, then refreshed automatically every 6 hours.
+      <View style={styles.sectionBlock}>
+        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Defaults</Text>
+        <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>
+          Reset categories, currencies, and daily-view preferences to their original setup.
         </Text>
-        {!!customError && <Text style={[styles.customError, { color: colors.destructive }]}>{customError}</Text>}
         <Pressable
-          testID="save-custom-currency"
-          onPress={saveCustomCurrency}
-          disabled={isAddingCurrency}
-          style={({ pressed }) => [styles.addButton, { backgroundColor: colors.primary, opacity: pressed || isAddingCurrency ? 0.65 : 1 }]}
+          testID="restore-defaults"
+          accessibilityLabel="Restore defaults"
+          onPress={confirmRestoreDefaults}
+          style={({ pressed }) => [styles.restoreButton, { backgroundColor: colors.secondary, opacity: pressed ? 0.75 : 1 }]}
         >
-          {isAddingCurrency ? <ActivityIndicator size="small" color={colors.primaryForeground} /> : <Feather name="plus" size={17} color={colors.primaryForeground} />}
-          <Text style={[styles.addButtonText, { color: colors.primaryForeground }]}>{isAddingCurrency ? 'Fetching rate…' : 'Fetch & add currency'}</Text>
+          <Feather name="rotate-ccw" size={16} color={colors.primary} />
+          <Text style={[styles.restoreButtonText, { color: colors.foreground }]}>Restore defaults</Text>
         </Pressable>
       </View>
 
-      <View style={[styles.ratesCard, { backgroundColor: colors.secondary }]}>
-        <View style={styles.ratesCopy}>
-          <Text style={[styles.ratesTitle, { color: colors.foreground }]}>Refresh exchange rates</Text>
-          <Text style={[styles.ratesMeta, { color: colors.mutedForeground }]}>{rateStatus === 'refreshing' ? 'Refreshing rates…' : rateStatus === 'error' ? 'Could not refresh. Using saved rates.' : formatUpdated(lastRateUpdated)}</Text>
+      <View style={styles.sectionBlock}>
+        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Daily view</Text>
+        <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>
+          Spread this month’s bills evenly across each day so daily totals reflect your true cost of living.
+        </Text>
+        <View style={[styles.spreadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={styles.spreadCopy}>
+            <Text style={[styles.spreadTitle, { color: colors.foreground }]}>Include monthly bills in daily totals</Text>
+            <Text style={[styles.spreadMeta, { color: colors.mutedForeground }]}>
+              Rent logged on the 15th still counts for the whole month — divided by days in that month, not only payment day.
+            </Text>
+          </View>
+          <Switch
+            testID="spread-monthly-toggle"
+            accessibilityLabel="Include monthly bills in daily totals"
+            value={spreadMonthlyIntoDaily}
+            onValueChange={(value) => {
+              Haptics.selectionAsync().catch(() => undefined);
+              setSpreadMonthlyIntoDaily(value);
+            }}
+            trackColor={{ false: colors.border, true: colors.primary }}
+            thumbColor="#ffffff"
+          />
         </View>
-        <Pressable
-          testID="refresh-rates"
-          accessibilityLabel="Refresh exchange rates"
-          onPress={refreshRates}
-          disabled={rateStatus === 'refreshing'}
-          style={({ pressed }) => [styles.refreshButton, { backgroundColor: colors.card, opacity: pressed || rateStatus === 'refreshing' ? 0.55 : 1 }]}
-        >
-          {rateStatus === 'refreshing' ? <ActivityIndicator size="small" color={colors.primary} /> : <Feather name="refresh-cw" size={17} color={colors.primary} />}
-        </Pressable>
       </View>
 
-      <Text style={[styles.sectionTitle, { color: colors.foreground, marginTop: 30 }]}>Daily view</Text>
+      <View style={styles.sectionBlock}>
+        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Backup & restore</Text>
       <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>
-        Spread this month’s bills evenly across each day so daily totals reflect your true cost of living.
-      </Text>
-      <View style={[styles.spreadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <View style={styles.spreadCopy}>
-          <Text style={[styles.spreadTitle, { color: colors.foreground }]}>Include monthly bills in daily totals</Text>
-          <Text style={[styles.spreadMeta, { color: colors.mutedForeground }]}>
-            Rent logged on the 15th still counts for the whole month — divided by days in that month, not only payment day.
-          </Text>
-        </View>
-        <Switch
-          testID="spread-monthly-toggle"
-          accessibilityLabel="Include monthly bills in daily totals"
-          value={spreadMonthlyIntoDaily}
-          onValueChange={(value) => {
-            Haptics.selectionAsync().catch(() => undefined);
-            setSpreadMonthlyIntoDaily(value);
-          }}
-          trackColor={{ false: colors.border, true: colors.primary }}
-          thumbColor="#ffffff"
-        />
-      </View>
-
-      <Text style={[styles.sectionTitle, { color: colors.foreground, marginTop: 30 }]}>Backup & restore</Text>
-      <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>
-        Save a JSON backup to move data between phones or keep a copy while traveling. JSON keeps expenses, currencies, and exchange rates together.
+        Export a JSON backup to restore on another phone, or CSV to review expenses in a spreadsheet.
       </Text>
       <View style={[styles.backupCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <Pressable
           testID="export-backup"
           accessibilityLabel="Export backup"
           onPress={exportData}
-          disabled={isExporting || isImporting}
+          disabled={isExporting || isExportingCsv || isImporting}
           style={({ pressed }) => [styles.backupButton, { backgroundColor: colors.secondary, opacity: pressed || isExporting ? 0.65 : 1 }]}
         >
           {isExporting ? <ActivityIndicator size="small" color={colors.primary} /> : <Feather name="upload" size={17} color={colors.primary} />}
           <View style={styles.backupCopy}>
-            <Text style={[styles.backupTitle, { color: colors.foreground }]}>Export backup</Text>
-            <Text style={[styles.backupMeta, { color: colors.mutedForeground }]}>{expenses.length} expenses · JSON file</Text>
+            <Text style={[styles.backupTitle, { color: colors.foreground }]}>Export JSON backup</Text>
+            <Text style={[styles.backupMeta, { color: colors.mutedForeground }]}>{expenses.length} expenses · full restore file</Text>
+          </View>
+        </Pressable>
+        <View style={[styles.backupDivider, { backgroundColor: colors.border }]} />
+        <Pressable
+          testID="export-csv"
+          accessibilityLabel="Export CSV"
+          onPress={exportCsvData}
+          disabled={isExporting || isExportingCsv || isImporting || !expenses.length}
+          style={({ pressed }) => [styles.backupButton, { backgroundColor: colors.secondary, opacity: pressed || isExportingCsv || !expenses.length ? 0.65 : 1 }]}
+        >
+          {isExportingCsv ? <ActivityIndicator size="small" color={colors.primary} /> : <Feather name="file-text" size={17} color={colors.primary} />}
+          <View style={styles.backupCopy}>
+            <Text style={[styles.backupTitle, { color: colors.foreground }]}>Export CSV</Text>
+            <Text style={[styles.backupMeta, { color: colors.mutedForeground }]}>{expenses.length} expenses · spreadsheet friendly</Text>
           </View>
         </Pressable>
         <View style={[styles.backupDivider, { backgroundColor: colors.border }]} />
@@ -377,7 +279,7 @@ export default function SettingsScreen() {
           testID="import-backup"
           accessibilityLabel="Import backup"
           onPress={importData}
-          disabled={isExporting || isImporting}
+          disabled={isExporting || isExportingCsv || isImporting}
           style={({ pressed }) => [styles.backupButton, { backgroundColor: colors.secondary, opacity: pressed || isImporting ? 0.65 : 1 }]}
         >
           {isImporting ? <ActivityIndicator size="small" color={colors.primary} /> : <Feather name="download" size={17} color={colors.primary} />}
@@ -388,8 +290,10 @@ export default function SettingsScreen() {
         </Pressable>
       </View>
       {!!backupMessage && <Text style={[styles.backupMessage, { color: colors.mutedForeground }]}>{backupMessage}</Text>}
+      </View>
 
-      <Text style={[styles.sectionTitle, { color: colors.foreground, marginTop: 30 }]}>Data</Text>
+      <View style={styles.sectionBlock}>
+        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Data</Text>
       <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>
         Permanently remove all logged expenses from this device.
       </Text>
@@ -415,64 +319,48 @@ export default function SettingsScreen() {
           </Text>
         </View>
       </Pressable>
+      </View>
+
+      {!!privacyPolicyUrl && (
+        <View style={styles.sectionBlock}>
+          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>About</Text>
+          <Text style={[styles.sectionDescription, { color: colors.mutedForeground }]}>
+            Learn how Multi Currency Spend handles your data.
+          </Text>
+          <Pressable
+            testID="privacy-policy-link"
+            accessibilityLabel="Open privacy policy"
+            onPress={openPrivacyPolicy}
+            style={({ pressed }) => [
+              styles.legalButton,
+              { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+            ]}
+          >
+            <Feather name="shield" size={17} color={colors.primary} />
+            <View style={styles.backupCopy}>
+              <Text style={[styles.backupTitle, { color: colors.foreground }]}>Privacy policy</Text>
+              <Text style={[styles.backupMeta, { color: colors.mutedForeground }]}>Your data stays on this device</Text>
+            </View>
+            <Feather name="external-link" size={16} color={colors.mutedForeground} />
+          </Pressable>
+        </View>
+      )}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 28 },
+  header: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 24 },
   eyebrow: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, marginBottom: 6 },
   title: { fontSize: 29, fontWeight: '700', letterSpacing: -0.8 },
   settingsIcon: { width: 43, height: 43, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  sectionBlock: { marginTop: 28, gap: 10 },
   sectionTitle: { fontSize: 17, fontWeight: '700', letterSpacing: -0.2 },
-  sectionDescription: { fontSize: 12, lineHeight: 18, marginTop: 5 },
-  currencyCard: { minHeight: 84, borderRadius: 18, flexDirection: 'row', alignItems: 'center', padding: 14, marginTop: 15 },
-  mainSymbol: { width: 53, height: 53, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
-  mainSymbolText: { fontSize: 20, fontWeight: '700' },
-  mainCopy: { flex: 1, marginLeft: 13 },
-  mainCode: { fontSize: 18, fontWeight: '700', marginBottom: 3 },
-  mainName: { fontSize: 12, fontWeight: '500' },
-  mainOptions: { gap: 8, marginTop: 10 },
-  mainOption: { minHeight: 48, borderWidth: 1, borderRadius: 13, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 10 },
-  optionCode: { width: 41, fontSize: 12, fontWeight: '700' },
-  optionName: { flex: 1, fontSize: 12, fontWeight: '500' },
-  availableHeader: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 30, marginBottom: 12 },
-  count: { fontSize: 13, fontWeight: '700' },
-  availableCard: { borderRadius: 17, borderWidth: 1, paddingHorizontal: 14 },
-  availableRow: { minHeight: 67, flexDirection: 'row', alignItems: 'center', gap: 11 },
-  currencyBadge: { minWidth: 50, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 7 },
-  currencyBadgeText: { fontSize: 11, fontWeight: '700' },
-  availableCopy: { flex: 1 },
-  availableName: { fontSize: 13, fontWeight: '600', marginBottom: 4 },
-  availableSymbol: { fontSize: 11, fontWeight: '500' },
-  ratesHeader: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 30, marginBottom: 12 },
-  ratesUpdated: { fontSize: 9, fontWeight: '500', maxWidth: 125, textAlign: 'right' },
-  rateList: { borderRadius: 17, borderWidth: 1, paddingHorizontal: 14 },
-  rateRow: { minHeight: 67, flexDirection: 'row', alignItems: 'center', gap: 11 },
-  rateBadge: { minWidth: 50, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 7 },
-  rateBadgeText: { fontSize: 11, fontWeight: '700' },
-  rateCopy: { flex: 1 },
-  rateTitle: { fontSize: 12, fontWeight: '700', marginBottom: 4 },
-  rateMeta: { fontSize: 10, fontWeight: '500' },
-  mainLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1 },
-  addLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.3, marginTop: 24, marginBottom: 10 },
-  customCard: { borderRadius: 17, borderWidth: 1, padding: 14, marginTop: 11 },
-  inputLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.1, marginBottom: 5, marginTop: 5 },
-  customInput: { minHeight: 44, borderRadius: 11, borderWidth: 1, paddingHorizontal: 12, fontSize: 13 },
-  lookupHint: { fontSize: 10, lineHeight: 15, marginTop: 10 },
-  customError: { fontSize: 11, lineHeight: 16, marginTop: 8 },
-  addButton: { minHeight: 45, borderRadius: 12, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 7, marginTop: 13 },
-  addButtonText: { fontSize: 13, fontWeight: '700' },
-  ratesCard: { minHeight: 65, borderRadius: 15, marginTop: 28, padding: 13, flexDirection: 'row', alignItems: 'center' },
-  ratesCopy: { flex: 1 },
-  ratesTitle: { fontSize: 12, fontWeight: '700', marginBottom: 4 },
-  ratesMeta: { fontSize: 10, fontWeight: '500' },
-  refreshButton: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  sectionDescription: { fontSize: 12, lineHeight: 18 },
   spreadCard: {
     borderRadius: 17,
     borderWidth: 1,
-    marginTop: 15,
     paddingHorizontal: 14,
     paddingVertical: 14,
     flexDirection: 'row',
@@ -482,13 +370,16 @@ const styles = StyleSheet.create({
   spreadCopy: { flex: 1 },
   spreadTitle: { fontSize: 13, fontWeight: '700', marginBottom: 5 },
   spreadMeta: { fontSize: 10, fontWeight: '500', lineHeight: 15 },
-  backupCard: { borderRadius: 17, borderWidth: 1, marginTop: 15, overflow: 'hidden' },
+  backupCard: { borderRadius: 17, borderWidth: 1, overflow: 'hidden' },
   backupButton: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12 },
   backupCopy: { flex: 1 },
   backupTitle: { fontSize: 13, fontWeight: '700', marginBottom: 4 },
   backupMeta: { fontSize: 10, fontWeight: '500', lineHeight: 15 },
   backupDivider: { height: 1 },
-  backupMessage: { fontSize: 11, lineHeight: 16, marginTop: 10 },
-  deleteAllButton: { minHeight: 68, borderRadius: 17, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, marginTop: 15 },
+  backupMessage: { fontSize: 11, lineHeight: 16 },
+  deleteAllButton: { minHeight: 68, borderRadius: 17, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12 },
   deleteAllTitle: { fontSize: 13, fontWeight: '700', marginBottom: 4 },
+  legalButton: { minHeight: 68, borderRadius: 17, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12 },
+  restoreButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 12, paddingVertical: 13 },
+  restoreButtonText: { fontSize: 14, fontWeight: '700' },
 });

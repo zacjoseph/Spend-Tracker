@@ -9,14 +9,32 @@ import {
 } from '@/utils/backup';
 import { toExpenseDateString } from '@/utils/expenseDate';
 import { monthlyDailyShare } from '@/utils/monthlySpread';
+import {
+  categoriesInclude,
+  DEFAULT_DAILY_CATEGORIES,
+  DEFAULT_MONTHLY_CATEGORIES,
+  findCategoryMatch,
+  PROTECTED_CATEGORY,
+  sanitizeCategoryList,
+  validateCategoryName,
+} from '@/utils/categories';
+import { getDefaultAvailableCurrencies, getDefaultCategories } from '@/utils/defaults';
+import { moveListItem } from '@/utils/reorderList';
+import { createTripId, findTripById, mergeTrips, sanitizeTrips, validateTripName, type Trip, type TripMutationResult } from '@/utils/trips';
 
 export type ExpenseType = 'daily' | 'monthly';
 
 export const CURRENCY_OPTIONS = [
   { code: 'USD', name: 'US Dollar', symbol: '$' },
-  { code: 'UGX', name: 'Ugandan Shilling', symbol: 'USh' },
   { code: 'EUR', name: 'Euro', symbol: '€' },
+  { code: 'JPY', name: 'Japanese Yen', symbol: '¥' },
   { code: 'GBP', name: 'British Pound', symbol: '£' },
+  { code: 'AUD', name: 'Australian Dollar', symbol: 'A$' },
+  { code: 'CAD', name: 'Canadian Dollar', symbol: 'CA$' },
+  { code: 'THB', name: 'Thai Baht', symbol: '฿' },
+  { code: 'MXN', name: 'Mexican Peso', symbol: 'MX$' },
+  { code: 'CNY', name: 'Chinese Yuan', symbol: '¥' },
+  { code: 'UGX', name: 'Ugandan Shilling', symbol: 'USh' },
   { code: 'KES', name: 'Kenyan Shilling', symbol: 'KSh' },
   { code: 'TZS', name: 'Tanzanian Shilling', symbol: 'TSh' },
   { code: 'RWF', name: 'Rwandan Franc', symbol: 'RF' },
@@ -38,6 +56,8 @@ export type AddCustomCurrencyResult = {
   rateToUsd?: number;
 };
 
+export type { Trip } from '@/utils/trips';
+
 export type Expense = {
   id: string;
   type: ExpenseType;
@@ -47,6 +67,7 @@ export type Expense = {
   note: string;
   date: string;
   createdAt: string;
+  tripId?: string | null;
 };
 
 type AddExpenseInput = {
@@ -56,7 +77,14 @@ type AddExpenseInput = {
   category: string;
   note: string;
   date?: Date;
+  tripId?: string | null;
 };
+
+type UpdateExpenseInput = AddExpenseInput & {
+  id: string;
+};
+
+type CategoryMutationResult = { success: boolean; message?: string; name?: string };
 
 type SpendingContextValue = {
   expenses: Expense[];
@@ -65,6 +93,10 @@ type SpendingContextValue = {
   entryCurrency: CurrencyCode;
   availableCurrencies: CurrencyCode[];
   currencyOptions: CurrencyOption[];
+  dailyCategories: string[];
+  monthlyCategories: string[];
+  trips: Trip[];
+  activeTripId: string | null;
   ratesToUsd: Record<string, number>;
   lastRateUpdated: string | null;
   rateStatus: 'idle' | 'refreshing' | 'error';
@@ -78,6 +110,7 @@ type SpendingContextValue = {
   monthlyDailyTotal: number;
   monthlyTotal: number;
   addExpense: (input: AddExpenseInput) => void;
+  updateExpense: (input: UpdateExpenseInput) => void;
   removeExpense: (id: string) => void;
   clearAllExpenses: () => void;
   setMainCurrency: (currency: CurrencyCode) => void;
@@ -85,6 +118,15 @@ type SpendingContextValue = {
   setSpreadMonthlyIntoDaily: (value: boolean) => void;
   addCustomCurrency: (input: { code: string; name: string }) => Promise<AddCustomCurrencyResult>;
   removeCurrency: (currency: CurrencyCode) => void;
+  addCategory: (type: ExpenseType, name: string) => CategoryMutationResult;
+  removeCategory: (type: ExpenseType, name: string) => CategoryMutationResult;
+  reorderCategories: (type: ExpenseType, fromIndex: number, toIndex: number) => void;
+  reorderCurrency: (fromIndex: number, toIndex: number) => void;
+  restoreDefaults: () => void;
+  addTrip: (name: string) => TripMutationResult;
+  removeTrip: (tripId: string) => void;
+  setActiveTripId: (tripId: string | null) => void;
+  getTripById: (tripId?: string | null) => Trip | undefined;
   refreshRates: () => Promise<void>;
   createBackup: () => SpendlyBackup;
   importBackup: (backup: SpendlyBackup, mode: 'replace' | 'merge') => { success: boolean; message: string; addedCount?: number };
@@ -96,12 +138,18 @@ type SpendingContextValue = {
 
 const STORAGE_KEY = '@spendly/data/v2';
 const LEGACY_STORAGE_KEY = '@spendly/expenses/v1';
-const DEFAULT_CURRENCIES: CurrencyCode[] = ['USD', 'UGX'];
+const DEFAULT_CURRENCIES = getDefaultAvailableCurrencies();
 const FALLBACK_RATES_TO_USD: Record<string, number> = {
   USD: 1,
-  UGX: 0.00028,
   EUR: 1.08,
+  JPY: 0.0067,
   GBP: 1.27,
+  AUD: 0.65,
+  CAD: 0.74,
+  THB: 0.029,
+  MXN: 0.058,
+  CNY: 0.14,
+  UGX: 0.00028,
   KES: 0.0072,
   TZS: 0.00029,
   RWF: 0.00072,
@@ -141,9 +189,13 @@ function isToday(dateString: string, now: Date) {
 export function SpendingProvider({ children }: { children: React.ReactNode }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [mainCurrency, setMainCurrencyState] = useState<CurrencyCode>('USD');
-  const [entryCurrency, setEntryCurrencyState] = useState<CurrencyCode>('UGX');
+  const [entryCurrency, setEntryCurrencyState] = useState<CurrencyCode>('USD');
   const [availableCurrencies, setAvailableCurrencies] = useState<CurrencyCode[]>(DEFAULT_CURRENCIES);
   const [customCurrencies, setCustomCurrencies] = useState<CurrencyOption[]>([]);
+  const [dailyCategories, setDailyCategories] = useState<string[]>(DEFAULT_DAILY_CATEGORIES);
+  const [monthlyCategories, setMonthlyCategories] = useState<string[]>(DEFAULT_MONTHLY_CATEGORIES);
+  const [trips, setTrips] = useState<Trip[]>([]);
+  const [activeTripId, setActiveTripIdState] = useState<string | null>(null);
   const [ratesToUsd, setRatesToUsd] = useState<Record<string, number>>(FALLBACK_RATES_TO_USD);
   const [lastRateUpdated, setLastRateUpdated] = useState<string | null>(null);
   const [rateStatus, setRateStatus] = useState<'idle' | 'refreshing' | 'error'>('idle');
@@ -170,6 +222,10 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
             entryCurrency?: CurrencyCode;
             availableCurrencies?: CurrencyCode[];
             customCurrencies?: CurrencyOption[];
+            dailyCategories?: string[];
+            monthlyCategories?: string[];
+            trips?: Trip[];
+            activeTripId?: string | null;
             ratesToUsd?: Record<string, number>;
             lastRateUpdated?: string | null;
             spreadMonthlyIntoDaily?: boolean;
@@ -181,11 +237,24 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
             : [];
           const knownCodes = new Set([...CURRENCY_OPTIONS.map((item) => item.code), ...storedCustomCurrencies.map((item) => item.code)]);
           setCustomCurrencies(storedCustomCurrencies);
-          if (Array.isArray(parsed.expenses)) setExpenses(parsed.expenses);
           if (parsed.mainCurrency && knownCodes.has(parsed.mainCurrency)) setMainCurrencyState(parsed.mainCurrency);
           if (parsed.entryCurrency && knownCodes.has(parsed.entryCurrency)) setEntryCurrencyState(parsed.entryCurrency);
           if (Array.isArray(parsed.availableCurrencies)) {
             setAvailableCurrencies(Array.from(new Set(parsed.availableCurrencies.filter((currency) => knownCodes.has(currency)))));
+          }
+          setDailyCategories(sanitizeCategoryList(parsed.dailyCategories, DEFAULT_DAILY_CATEGORIES));
+          setMonthlyCategories(sanitizeCategoryList(parsed.monthlyCategories, DEFAULT_MONTHLY_CATEGORIES));
+          const storedTrips = sanitizeTrips(parsed.trips);
+          setTrips(storedTrips);
+          const storedTripIds = new Set(storedTrips.map((trip) => trip.id));
+          setActiveTripIdState(parsed.activeTripId && storedTripIds.has(parsed.activeTripId) ? parsed.activeTripId : null);
+          if (Array.isArray(parsed.expenses)) {
+            setExpenses(
+              parsed.expenses.map((expense) => ({
+                ...expense,
+                tripId: expense.tripId && storedTripIds.has(expense.tripId) ? expense.tripId : null,
+              })),
+            );
           }
           if (parsed.ratesToUsd) setRatesToUsd({ ...FALLBACK_RATES_TO_USD, ...parsed.ratesToUsd });
           if (parsed.lastRateUpdated) setLastRateUpdated(parsed.lastRateUpdated);
@@ -213,6 +282,10 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
           entryCurrency,
           availableCurrencies,
           customCurrencies,
+          dailyCategories,
+          monthlyCategories,
+          trips,
+          activeTripId,
           ratesToUsd,
           lastRateUpdated,
           spreadMonthlyIntoDaily,
@@ -225,6 +298,10 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
     entryCurrency,
     availableCurrencies,
     customCurrencies,
+    dailyCategories,
+    monthlyCategories,
+    trips,
+    activeTripId,
     ratesToUsd,
     lastRateUpdated,
     spreadMonthlyIntoDaily,
@@ -296,6 +373,10 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
       entryCurrency,
       availableCurrencies,
       currencyOptions,
+      dailyCategories,
+      monthlyCategories,
+      trips,
+      activeTripId,
       ratesToUsd,
       lastRateUpdated,
       rateStatus,
@@ -311,13 +392,34 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
       getMonthlyDailyShareForMonth,
       addExpense: (input: AddExpenseInput) => {
         const createdAt = new Date().toISOString();
+        const tripId = input.tripId && trips.some((trip) => trip.id === input.tripId) ? input.tripId : null;
         const newExpense: Expense = {
           ...input,
+          tripId,
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
           date: toExpenseDateString(input.date ?? new Date()),
           createdAt,
         };
         setExpenses((current) => [newExpense, ...current]);
+      },
+      updateExpense: (input: UpdateExpenseInput) => {
+        const tripId = input.tripId && trips.some((trip) => trip.id === input.tripId) ? input.tripId : null;
+        setExpenses((current) =>
+          current.map((expense) =>
+            expense.id === input.id
+              ? {
+                  ...expense,
+                  type: input.type,
+                  amount: input.amount,
+                  currency: input.currency,
+                  category: input.category,
+                  note: input.note,
+                  tripId,
+                  date: toExpenseDateString(input.date ?? new Date(expense.date)),
+                }
+              : expense,
+          ),
+        );
       },
       removeExpense: (id: string) => {
         setExpenses((current) => current.filter((expense) => expense.id !== id));
@@ -339,17 +441,29 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
         if (!/^[A-Z]{3}$/.test(code) || !input.name.trim()) {
           return { success: false, message: 'Enter a valid 3-letter currency code and name.' };
         }
-        if (CURRENCY_OPTIONS.some((currency) => currency.code === code) || availableCurrencies.includes(code)) {
+        if (availableCurrencies.includes(code)) {
           return { success: false, message: 'That currency is already available.' };
         }
+        const catalogOption = CURRENCY_OPTIONS.find((currency) => currency.code === code);
         try {
           const response = await fetch(RATES_ENDPOINT);
           const data = (await response.json()) as { result?: string; rates?: Record<string, number> };
           const unitsPerUsd = data.result === 'success' ? data.rates?.[code] : undefined;
+          const rateToUsd =
+            unitsPerUsd && unitsPerUsd > 0 ? 1 / unitsPerUsd : (ratesToUsdRef.current[code] ?? FALLBACK_RATES_TO_USD[code]);
+          if (!rateToUsd || rateToUsd <= 0) {
+            return { success: false, message: `No live exchange rate was found for ${code}.` };
+          }
+
+          if (catalogOption) {
+            setRatesToUsd((current) => ({ ...current, [code]: rateToUsd }));
+            setAvailableCurrencies((current) => [...current, code]);
+            return { success: true, currency: catalogOption, rateToUsd };
+          }
+
           if (!unitsPerUsd || unitsPerUsd <= 0) {
             return { success: false, message: `No live exchange rate was found for ${code}.` };
           }
-          const rateToUsd = 1 / unitsPerUsd;
           const currency: CurrencyOption = {
             code,
             name: input.name.trim(),
@@ -369,6 +483,61 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
         setAvailableCurrencies((current) => current.filter((item) => item !== currency));
         if (entryCurrency === currency) setEntryCurrencyState(mainCurrency);
       },
+      addCategory: (type: ExpenseType, name: string) => {
+        const validated = validateCategoryName(name);
+        if (!validated.success) return { success: false, message: validated.message };
+        const list = type === 'daily' ? dailyCategories : monthlyCategories;
+        if (categoriesInclude(list, validated.name)) {
+          return { success: false, message: 'That category already exists.' };
+        }
+        const setter = type === 'daily' ? setDailyCategories : setMonthlyCategories;
+        setter((current) => [...current, validated.name]);
+        return { success: true, name: validated.name };
+      },
+      removeCategory: (type: ExpenseType, name: string) => {
+        const match = findCategoryMatch(type === 'daily' ? dailyCategories : monthlyCategories, name);
+        if (!match) return { success: false, message: 'Category not found.' };
+        if (match === PROTECTED_CATEGORY) return { success: false, message: 'Other cannot be removed.' };
+        const setter = type === 'daily' ? setDailyCategories : setMonthlyCategories;
+        setter((current) => current.filter((item) => item !== match));
+        return { success: true };
+      },
+      reorderCategories: (type: ExpenseType, fromIndex: number, toIndex: number) => {
+        const setter = type === 'daily' ? setDailyCategories : setMonthlyCategories;
+        setter((current) => moveListItem(current, fromIndex, toIndex));
+      },
+      reorderCurrency: (fromIndex: number, toIndex: number) => {
+        setAvailableCurrencies((current) => moveListItem(current, fromIndex, toIndex));
+      },
+      restoreDefaults: () => {
+        setDailyCategories(getDefaultCategories('daily'));
+        setMonthlyCategories(getDefaultCategories('monthly'));
+        setAvailableCurrencies(getDefaultAvailableCurrencies());
+        setMainCurrencyState('USD');
+        setEntryCurrencyState('USD');
+        setSpreadMonthlyIntoDailyState(false);
+      },
+      addTrip: (name: string) => {
+        const validated = validateTripName(name);
+        if (!validated.success || !validated.name) return { success: false, message: validated.message };
+        const duplicate = trips.some((trip) => trip.name.toLowerCase() === validated.name!.toLowerCase());
+        if (duplicate) return { success: false, message: 'You already have a trip with that name.' };
+        const trip: Trip = { id: createTripId(), name: validated.name, createdAt: new Date().toISOString() };
+        setTrips((current) => [trip, ...current]);
+        return { success: true, trip };
+      },
+      setActiveTripId: (tripId: string | null) => {
+        if (tripId && !trips.some((trip) => trip.id === tripId)) return;
+        setActiveTripIdState(tripId);
+      },
+      removeTrip: (tripId: string) => {
+        setTrips((current) => current.filter((trip) => trip.id !== tripId));
+        if (activeTripId === tripId) setActiveTripIdState(null);
+        setExpenses((current) =>
+          current.map((expense) => (expense.tripId === tripId ? { ...expense, tripId: null } : expense)),
+        );
+      },
+      getTripById: (tripId?: string | null) => findTripById(trips, tripId),
       createBackup: () =>
         createBackup({
           expenses,
@@ -376,6 +545,10 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
           entryCurrency,
           availableCurrencies,
           customCurrencies,
+          dailyCategories,
+          monthlyCategories,
+          trips,
+          activeTripId,
           ratesToUsd,
           lastRateUpdated,
           spreadMonthlyIntoDaily,
@@ -391,6 +564,10 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
           setEntryCurrencyState(normalized.entryCurrency);
           setAvailableCurrencies(normalized.availableCurrencies);
           setCustomCurrencies(normalized.customCurrencies);
+          setDailyCategories(normalized.dailyCategories ?? DEFAULT_DAILY_CATEGORIES);
+          setMonthlyCategories(normalized.monthlyCategories ?? DEFAULT_MONTHLY_CATEGORIES);
+          setTrips(normalized.trips ?? []);
+          setActiveTripIdState(normalized.activeTripId ?? null);
           setRatesToUsd(normalized.ratesToUsd);
           setLastRateUpdated(normalized.lastRateUpdated);
           setSpreadMonthlyIntoDailyState(normalized.spreadMonthlyIntoDaily);
@@ -403,6 +580,7 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
         const merged = mergeExpenses(expenses, normalized.expenses);
         const addedCount = merged.length - expenses.length;
         setExpenses(merged);
+        setTrips(mergeTrips(trips, normalized.trips ?? []));
         return {
           success: true,
           message: addedCount > 0 ? `Added ${addedCount} new expenses.` : 'No new expenses to add.',
@@ -412,7 +590,8 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
       refreshRates,
       formatAmount: (amount: number, currency = mainCurrency) => {
         const option = currencyOptions.find((item) => item.code === currency);
-        const maximumFractionDigits = currency === 'UGX' || currency === 'TZS' || currency === 'RWF' ? 0 : 2;
+        const zeroDecimalCurrencies = new Set(['UGX', 'TZS', 'RWF', 'JPY', 'THB']);
+        const maximumFractionDigits = zeroDecimalCurrencies.has(currency) ? 0 : 2;
         try {
           return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits }).format(amount);
         } catch {
@@ -427,6 +606,10 @@ export function SpendingProvider({ children }: { children: React.ReactNode }) {
     entryCurrency,
     availableCurrencies,
     customCurrencies,
+    dailyCategories,
+    monthlyCategories,
+    trips,
+    activeTripId,
     ratesToUsd,
     lastRateUpdated,
     rateStatus,
